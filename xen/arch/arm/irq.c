@@ -89,6 +89,8 @@ static int __cpuinit init_local_irq_data(void)
         init_one_irq_desc(desc);
         desc->irq = irq;
         desc->action  = NULL;
+        desc->arch.dev = NULL;
+        desc->arch.virq = 0;
 
         /* PPIs are included in local_irqs, we copy the IRQ type from
          * local_irqs_type when bringing up local IRQ for this CPU in
@@ -102,6 +104,30 @@ static int __cpuinit init_local_irq_data(void)
     spin_unlock(&local_irqs_type_lock);
 
     return 0;
+}
+
+int irq_set_desc_data(unsigned int irq, struct its_device *d)
+{
+    unsigned long flags;
+    struct irq_desc *desc = irq_to_desc(irq);
+
+    spin_lock_irqsave(&desc->lock, flags);
+    desc->arch.dev = d;
+    spin_unlock_irqrestore(&desc->lock, flags);
+
+    return 0;
+}
+
+struct its_device *irq_get_desc_data(struct irq_desc *desc)
+{
+    unsigned long flags;
+    struct its_device *dev;
+
+    spin_lock_irqsave(&desc->lock, flags);
+    dev = desc->arch.dev;
+    spin_unlock_irqrestore(&desc->lock, flags);
+
+    return dev;
 }
 
 void __init init_IRQ(void)
