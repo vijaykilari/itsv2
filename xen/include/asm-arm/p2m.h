@@ -147,6 +147,9 @@ void guest_physmap_remove_page(struct domain *d,
 
 unsigned long gmfn_to_mfn(struct domain *d, unsigned long gpfn);
 
+struct page_info *get_page_from_paddr(struct domain *d, paddr_t paddr,
+                                      unsigned long flags);
+
 /*
  * Populate-on-demand
  */
