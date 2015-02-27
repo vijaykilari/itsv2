@@ -11,6 +11,7 @@
 #include <asm/gic.h>
 #include <public/hvm/params.h>
 #include <xen/serial.h>
+#include <xen/radix-tree.h>
 #include <xen/hvm/iommu.h>
 
 struct hvm_domain
@@ -97,6 +98,9 @@ struct arch_domain
          * struct arch_vcpu.
          */
         struct pending_irq *pending_irqs;
+        /* Lock for managing pending lpi in radix tree */
+        spinlock_t pending_lpi_lock;
+        struct radix_tree_root pending_lpis;
         /* Base address for guest GIC */
         paddr_t dbase; /* Distributor base address */
         paddr_t cbase; /* CPU base address */

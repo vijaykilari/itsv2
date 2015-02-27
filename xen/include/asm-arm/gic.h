@@ -163,6 +163,7 @@
 #define DT_MATCH_GIC_V3 DT_MATCH_COMPATIBLE("arm,gic-v3")
 
 #define is_lpi(lpi) (lpi >= NR_GIC_LPI)
+
 /*
  * GICv3 registers that needs to be saved/restored
  */

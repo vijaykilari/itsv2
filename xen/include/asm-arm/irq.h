@@ -2,6 +2,7 @@
 #define _ASM_HW_IRQ_H
 
 #include <xen/config.h>
+#include <xen/radix-tree.h>
 #include <xen/device_tree.h>
 
 #define NR_VECTORS 256 /* XXX */
@@ -29,6 +30,7 @@ struct arch_irq_desc {
 #define arch_hwdom_irqs(domid) NR_IRQS
 
 struct irq_desc;
+struct pending_irq;
 struct irqaction;
 
 struct irq_desc *__irq_to_desc(int irq);
@@ -54,6 +56,14 @@ struct its_device *irq_get_desc_data(struct irq_desc *d);
 int platform_get_irq(const struct dt_device_node *device, int index);
 
 void irq_set_affinity(struct irq_desc *desc, const cpumask_t *cpu_mask);
+
+struct irq_desc *find_irq_desc(struct radix_tree_root *root_node, int irq);
+struct irq_desc *insert_irq_desc(struct radix_tree_root *root_node, int irq);
+struct irq_desc *delete_irq_desc(struct radix_tree_root *root_node, int irq);
+
+struct pending_irq *insert_pending_irq_desc(struct domain *d, int irq);
+struct pending_irq *find_pending_irq_desc(struct domain *d, int irq);
+struct pending_irq *delete_pending_irq_desc(struct domain *d, int irq);
 
 #endif /* _ASM_HW_IRQ_H */
 /*

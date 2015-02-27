@@ -30,6 +30,8 @@
 
 static unsigned int local_irqs_type[NR_LOCAL_IRQS];
 static DEFINE_SPINLOCK(local_irqs_type_lock);
+static DEFINE_SPINLOCK(radix_tree_desc_lock);
+static struct radix_tree_root desc_root;
 
 static void ack_none(struct irq_desc *irq)
 {
@@ -51,18 +53,149 @@ hw_irq_controller no_irq_type = {
 static irq_desc_t irq_desc[NR_IRQS];
 static DEFINE_PER_CPU(irq_desc_t[NR_LOCAL_IRQS], local_irq_desc);
 
-irq_desc_t *__irq_to_desc(int irq)
+static void init_one_irq_data(int irq, struct irq_desc *desc);
+
+struct irq_desc * find_irq_desc(struct radix_tree_root *root_node, int irq)
 {
-    if (irq < NR_LOCAL_IRQS) return &this_cpu(local_irq_desc)[irq];
-    return &irq_desc[irq-NR_LOCAL_IRQS];
+    unsigned long flags;
+    struct irq_desc *desc;
+
+    spin_lock_irqsave(&radix_tree_desc_lock, flags);
+    desc = radix_tree_lookup(root_node, irq);
+    spin_unlock_irqrestore(&radix_tree_desc_lock, flags);
+
+    return desc;
 }
 
-int __init arch_init_one_irq_desc(struct irq_desc *desc)
+struct pending_irq *find_pending_irq_desc(struct domain *d, int irq)
+{
+    unsigned long flags;
+    struct pending_irq *p;
+
+    spin_lock_irqsave(&d->arch.vgic.pending_lpi_lock, flags);
+    p = radix_tree_lookup(&d->arch.vgic.pending_lpis, irq);
+    spin_unlock_irqrestore(&d->arch.vgic.pending_lpi_lock, flags);
+
+    return p;
+}
+
+struct irq_desc *insert_irq_desc(struct radix_tree_root *root_node, int irq)
+{
+    unsigned long flags;
+    struct irq_desc *desc;
+    int ret;
+
+    spin_lock_irqsave(&radix_tree_desc_lock, flags);
+    desc = radix_tree_lookup(root_node, irq);
+    if ( desc == NULL )
+    {
+
+        desc = xzalloc(struct irq_desc);
+        if ( desc == NULL )
+            goto err;
+        init_one_irq_data(irq, desc);
+        ret = radix_tree_insert(root_node, irq, desc);
+        if ( ret )
+        {
+            xfree(desc);
+            goto err;
+        }
+    }
+    spin_unlock_irqrestore(&radix_tree_desc_lock, flags);
+
+    return desc;
+err:
+    spin_unlock_irqrestore(&radix_tree_desc_lock, flags);
+
+    return NULL;
+}
+
+struct pending_irq *insert_pending_irq_desc(struct domain *d, int irq)
+{
+    unsigned long flags;
+    int ret;
+    struct pending_irq *p;
+
+    spin_lock_irqsave(&d->arch.vgic.pending_lpi_lock, flags);
+    p = radix_tree_lookup(&d->arch.vgic.pending_lpis, irq);
+    if ( p == NULL )
+    {
+        if ( (p = xzalloc(struct pending_irq)) == NULL )
+            goto err;
+        ret = radix_tree_insert(&d->arch.vgic.pending_lpis, irq, p);
+        if ( ret )
+        {
+            xfree(p);
+            goto err;
+        }
+        INIT_LIST_HEAD(&p->inflight);
+        INIT_LIST_HEAD(&p->lr_queue);
+    }
+    spin_unlock_irqrestore(&d->arch.vgic.pending_lpi_lock, flags);
+
+    return p;
+err:
+    spin_unlock_irqrestore(&d->arch.vgic.pending_lpi_lock, flags);
+
+    return NULL;
+}
+
+struct irq_desc *delete_irq_desc(struct radix_tree_root *root_node, int irq)
+{
+    unsigned long flags;
+    struct irq_desc *desc;
+
+    spin_lock_irqsave(&radix_tree_desc_lock, flags);
+    desc = radix_tree_delete(root_node, irq);
+    spin_unlock_irqrestore(&radix_tree_desc_lock, flags);
+
+    return desc;
+}
+
+struct pending_irq *delete_pending_irq_desc(struct domain *d, int irq)
+{
+    unsigned long flags;
+    struct pending_irq *p;
+
+    spin_lock_irqsave(&d->arch.vgic.pending_lpi_lock, flags);
+    p = radix_tree_delete(&d->arch.vgic.pending_lpis, irq);
+    spin_unlock_irqrestore(&d->arch.vgic.pending_lpi_lock, flags);
+
+    return p; 
+}
+
+irq_desc_t *__irq_to_desc(int irq)
+{
+    struct irq_desc *desc = NULL;
+
+    if (irq < NR_LOCAL_IRQS) return &this_cpu(local_irq_desc)[irq];
+    else if ( irq >= NR_LOCAL_IRQS && irq < NR_IRQS)
+        return &irq_desc[irq-NR_LOCAL_IRQS];
+    else
+    {
+        if ( is_lpi(irq) )
+            desc = find_irq_desc(&desc_root, irq);
+        else
+            BUG();
+    }
+
+    return desc;
+}
+
+int arch_init_one_irq_desc(struct irq_desc *desc)
 {
     desc->arch.type = DT_IRQ_TYPE_INVALID;
     return 0;
 }
 
+static void init_one_irq_data(int irq, struct irq_desc *desc)
+{
+        init_one_irq_desc(desc);
+        desc->irq = irq;
+        desc->arch.virq = 0;
+        desc->action  = NULL;
+        desc->arch.dev = NULL;
+}
 
 static int __init init_irq_data(void)
 {
@@ -72,7 +205,9 @@ static int __init init_irq_data(void)
         struct irq_desc *desc = irq_to_desc(irq);
         init_one_irq_desc(desc);
         desc->irq = irq;
+        desc->arch.virq = 0;
         desc->action  = NULL;
+        desc->arch.dev = NULL;
     }
 
     return 0;
@@ -141,6 +276,7 @@ void __init init_IRQ(void)
 
     BUG_ON(init_local_irq_data() < 0);
     BUG_ON(init_irq_data() < 0);
+    radix_tree_init(&desc_root);
 }
 
 void __cpuinit init_secondary_IRQ(void)
@@ -286,10 +422,14 @@ out_no_end:
 void release_irq(unsigned int irq, const void *dev_id)
 {
     struct irq_desc *desc;
+    struct pending_irq *p;
     unsigned long flags;
     struct irqaction *action, **action_ptr;
+    struct vcpu *v = current;
 
     desc = irq_to_desc(irq);
+
+    if ( !desc ) return;
 
     spin_lock_irqsave(&desc->lock,flags);
 
@@ -327,6 +467,14 @@ void release_irq(unsigned int irq, const void *dev_id)
 
     if ( action->free_on_release )
         xfree(action);
+
+    if ( is_lpi(irq) )
+    {
+        desc = delete_irq_desc(&desc_root, irq);
+        p = delete_pending_irq_desc(v->domain, irq);
+        xfree(desc);
+        xfree(p);
+    }
 }
 
 static int __setup_irq(struct irq_desc *desc, unsigned int irqflags,
@@ -364,6 +512,8 @@ int setup_irq(unsigned int irq, unsigned int irqflags, struct irqaction *new)
     bool_t disabled;
 
     desc = irq_to_desc(irq);
+
+    ASSERT(desc != NULL);
 
     spin_lock_irqsave(&desc->lock, flags);
 
@@ -408,7 +558,8 @@ int route_irq_to_guest(struct domain *d, unsigned int irq,
                        const char * devname)
 {
     struct irqaction *action;
-    struct irq_desc *desc = irq_to_desc(irq);
+    struct irq_desc *desc;
+    struct pending_irq *p;
     unsigned long flags;
     int retval = 0;
 
@@ -419,6 +570,20 @@ int route_irq_to_guest(struct domain *d, unsigned int irq,
     action->dev_id = d;
     action->name = devname;
     action->free_on_release = 1;
+
+    if ( is_lpi(irq) )
+    {
+        desc = insert_irq_desc(&desc_root, irq);
+        if ( !desc )
+            return -ENOMEM;
+        init_one_irq_data(irq, desc);
+
+        p = insert_pending_irq_desc(d, irq);
+        if ( !p )
+            return -ENOMEM;
+    }
+    else
+        desc = irq_to_desc(irq);
 
     spin_lock_irqsave(&desc->lock, flags);
 
@@ -558,6 +723,7 @@ int platform_get_irq(const struct dt_device_node *device, int index)
 {
     struct dt_irq dt_irq;
     unsigned int type, irq;
+    struct irq_desc *desc;
     int res;
 
     res = dt_device_get_irq(device, index, &dt_irq);
@@ -566,6 +732,17 @@ int platform_get_irq(const struct dt_device_node *device, int index)
 
     irq = dt_irq.irq;
     type = dt_irq.type;
+
+    if ( is_lpi(irq) )
+    {
+        desc = insert_irq_desc(&desc_root, irq);
+        if ( !desc )
+            return -ENOMEM;
+        init_one_irq_data(irq, desc);
+        /* XXX: Here we don't know which is the domain.
+         * So pending irq structure is allocate when required
+         */
+    }
 
     /* Setup the IRQ type */
     if ( irq < NR_LOCAL_IRQS )

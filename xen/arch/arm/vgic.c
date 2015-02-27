@@ -30,6 +30,7 @@
 
 #include <asm/mmio.h>
 #include <asm/gic.h>
+#include <asm/gic-its.h>
 #include <asm/vgic.h>
 
 static inline struct vgic_irq_rank *vgic_get_rank(struct vcpu *v, int rank)
@@ -108,6 +109,9 @@ int domain_vgic_init(struct domain *d)
     for (i=0; i<DOMAIN_NR_RANKS(d); i++)
         spin_lock_init(&d->arch.vgic.shared_irqs[i].lock);
 
+    radix_tree_init(&d->arch.vgic.pending_lpis);
+    spin_lock_init(&d->arch.vgic.pending_lpi_lock);
+
     d->arch.vgic.handler->domain_init(d);
 
     d->arch.vgic.allocated_irqs =
@@ -127,11 +131,18 @@ void register_vgic_ops(struct domain *d, const struct vgic_ops *ops)
    d->arch.vgic.handler = ops;
 }
 
+void free_pending_lpis(void *ptr)
+{
+   struct pending_irq *pending_desc = ptr;
+   xfree(pending_desc);
+}
+
 void domain_vgic_free(struct domain *d)
 {
     xfree(d->arch.vgic.shared_irqs);
     xfree(d->arch.vgic.pending_irqs);
     xfree(d->arch.vgic.allocated_irqs);
+    radix_tree_destroy(&d->arch.vgic.pending_lpis, free_pending_lpis);
 }
 
 int vcpu_vgic_init(struct vcpu *v)
@@ -358,13 +369,18 @@ int vgic_to_sgi(struct vcpu *v, register_t sgir, enum gic_sgi_mode irqmode, int 
 
 struct pending_irq *irq_to_pending(struct vcpu *v, unsigned int irq)
 {
-    struct pending_irq *n;
+    struct pending_irq *n = NULL;
     /* Pending irqs allocation strategy: the first vgic.nr_spis irqs
      * are used for SPIs; the rests are used for per cpu irqs */
     if ( irq < 32 )
         n = &v->arch.vgic.pending_irqs[irq];
-    else
+    else if ( irq < 1024 )
         n = &v->domain->arch.vgic.pending_irqs[irq - 32];
+    else
+    {
+        if ( is_lpi(irq) )
+            n = find_pending_irq_desc(v->domain, irq);
+    }
     return n;
 }
 
