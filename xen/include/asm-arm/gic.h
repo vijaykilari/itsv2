@@ -214,7 +214,6 @@ enum gic_version {
 };
 
 extern enum gic_version gic_hw_version(void);
-
 /* Program the GIC to route an interrupt */
 extern void gic_route_irq_to_xen(struct irq_desc *desc, const cpumask_t *cpu_mask,
                                  unsigned int priority);
@@ -345,6 +344,8 @@ struct gic_hw_operations {
 void register_gic_ops(const struct gic_hw_operations *ops);
 int gic_make_node(const struct domain *d,const struct dt_device_node *node,
                   void *fdt);
+void gic_route_lpi_to_guest(struct domain *d, struct irq_desc *desc,
+                            const cpumask_t *cpu_mask, unsigned int priority);
 
 #endif /* __ASSEMBLY__ */
 #endif

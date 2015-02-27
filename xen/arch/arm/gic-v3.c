@@ -869,9 +869,13 @@ static void gicv3_update_lr(int lr, const struct pending_irq *p,
 
     val =  (((uint64_t)state & 0x3) << GICH_LR_STATE_SHIFT) | grp;
     val |= ((uint64_t)p->priority & 0xff) << GICH_LR_PRIORITY_SHIFT;
-    val |= ((uint64_t)p->irq & GICH_LR_VIRTUAL_MASK) << GICH_LR_VIRTUAL_SHIFT;
 
-   if ( p->desc != NULL )
+    if ( is_lpi(p->irq) )
+        val |= ((uint64_t)p->desc->arch.virq & GICH_LR_VIRTUAL_MASK) << GICH_LR_VIRTUAL_SHIFT;
+    else
+        val |= ((uint64_t)p->irq & GICH_LR_VIRTUAL_MASK) << GICH_LR_VIRTUAL_SHIFT;
+
+   if ( p->desc != NULL && !(is_lpi(p->irq)) )
        val |= GICH_LR_HW | (((uint64_t)p->desc->irq & GICH_LR_PHYSICAL_MASK)
                            << GICH_LR_PHYSICAL_SHIFT);
 

@@ -34,6 +34,7 @@
 #include <asm/io.h>
 #include <asm/gic.h>
 #include <asm/vgic.h>
+#include <asm/gic-its.h>
 
 static void gic_restore_pending_irqs(struct vcpu *v);
 
@@ -121,6 +122,20 @@ void gic_route_irq_to_xen(struct irq_desc *desc, const cpumask_t *cpu_mask,
     desc->handler = gic_hw_ops->gic_host_irq_type;
 
     gic_set_irq_properties(desc, cpu_mask, priority);
+}
+
+void gic_route_lpi_to_guest(struct domain *d, struct irq_desc *desc,
+                            const cpumask_t *cpu_mask, unsigned int priority)
+{
+    struct pending_irq *p;
+    ASSERT(spin_is_locked(&desc->lock));
+
+    desc->handler = gic_hw_ops->gic_guest_irq_type;
+    set_bit(_IRQ_GUEST, &desc->status);
+
+    /* TODO: do not assume delivery to vcpu0 */
+    p = irq_to_pending(d->vcpu[0], desc->irq);
+    p->desc = desc;
 }
 
 /* Program the GIC to route an interrupt to a guest
@@ -330,20 +345,33 @@ static void gic_update_one_lr(struct vcpu *v, int i)
     struct pending_irq *p;
     int irq;
     struct gic_lr lr_val;
+    uint32_t pirq;
 
     ASSERT(spin_is_locked(&v->arch.vgic.lock));
     ASSERT(!local_irq_is_enabled());
 
     gic_hw_ops->read_lr(i, &lr_val);
     irq = lr_val.virq;
-    p = irq_to_pending(v, irq);
+
+    if ( is_lpi(irq) )
+    {
+        // Fetch corresponding plpi for vlpi
+        if ( vgic_its_get_pid(v, irq, &pirq) )
+            BUG();
+        p = irq_to_pending(v, pirq);
+        irq = pirq;
+    }
+    else
+    {
+        p = irq_to_pending(v, irq);
+    }
     if ( lr_val.state & GICH_LR_ACTIVE )
     {
         set_bit(GIC_IRQ_GUEST_ACTIVE, &p->status);
         if ( test_bit(GIC_IRQ_GUEST_ENABLED, &p->status) &&
              test_and_clear_bit(GIC_IRQ_GUEST_QUEUED, &p->status) )
         {
-            if ( p->desc == NULL )
+            if ( p->desc == NULL  || is_lpi(irq) )
             {
                  lr_val.state |= GICH_LR_PENDING;
                  gic_hw_ops->write_lr(i, &lr_val);
@@ -569,6 +597,11 @@ void gic_interrupt(struct cpu_user_regs *regs, int is_fiq)
     do  {
         /* Reading IRQ will ACK it */
         irq = gic_hw_ops->read_irq();
+        if ( is_lpi(irq) ) {
+            // TODO: Enable irqs?
+            do_IRQ(regs, irq, is_fiq);
+            continue;
+        }
 
         if ( likely(irq >= 16 && irq < 1021) )
         {

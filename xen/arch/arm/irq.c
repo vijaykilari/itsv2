@@ -284,7 +284,7 @@ void __cpuinit init_secondary_IRQ(void)
     BUG_ON(init_local_irq_data() < 0);
 }
 
-static inline struct domain *irq_get_domain(struct irq_desc *desc)
+struct domain *irq_get_domain(struct irq_desc *desc)
 {
     ASSERT(spin_is_locked(&desc->lock));
 
@@ -611,9 +611,13 @@ int route_irq_to_guest(struct domain *d, unsigned int irq,
     retval = __setup_irq(desc, 0, action);
     if ( retval )
         goto out;
+    if ( irq >= NR_LOCAL_IRQS && irq < NR_IRQS)
+        gic_route_irq_to_guest(d, desc, cpumask_of(smp_processor_id()),
+                               GIC_PRI_IRQ);
+    else
+        gic_route_lpi_to_guest(d, desc, cpumask_of(smp_processor_id()),
+                               GIC_PRI_IRQ);
 
-    gic_route_irq_to_guest(d, desc, cpumask_of(smp_processor_id()),
-                           GIC_PRI_IRQ);
     spin_unlock_irqrestore(&desc->lock, flags);
     return 0;
 

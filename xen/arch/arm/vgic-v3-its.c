@@ -896,6 +896,16 @@ int vgic_its_get_pid(struct vcpu *v, uint32_t vlpi, uint32_t *plpi)
     return 1;
 }
 
+uint8_t vgic_its_get_priority(struct vcpu *v, uint32_t pid)
+{
+    uint8_t priority;
+  
+    priority =  readb_relaxed(v->domain->arch.lpi_conf->prop_page + pid);
+    priority &= 0xfc;
+
+    return priority;
+}
+
 static int vgic_v3_gits_lpi_mmio_read(struct vcpu *v, mmio_info_t *info)
 {
     uint32_t offset;

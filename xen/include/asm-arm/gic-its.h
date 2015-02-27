@@ -232,6 +232,8 @@ uint32_t its_get_pta_type(void);
 uint32_t its_get_nr_its(void);
 struct its_node * its_get_phys_node(uint32_t dev_id);
 int vgic_its_unmap_lpi_prop(struct vcpu *v);
+int vgic_its_get_pid(struct vcpu *v, uint32_t vlpi, uint32_t *plpi);
+uint8_t vgic_its_get_priority(struct vcpu *v, uint32_t pid);
 #endif /* __ASM_ARM_GIC_ITS_H__ */
 
 /*

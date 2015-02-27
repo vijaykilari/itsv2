@@ -54,6 +54,7 @@ int irq_set_spi_type(unsigned int spi, unsigned int type);
 int irq_set_desc_data(unsigned int irq, struct its_device *d);
 struct its_device *irq_get_desc_data(struct irq_desc *d);
 int platform_get_irq(const struct dt_device_node *device, int index);
+struct domain *irq_get_domain(struct irq_desc *desc);
 
 void irq_set_affinity(struct irq_desc *desc, const cpumask_t *cpu_mask);
 
