@@ -41,6 +41,7 @@
 #include <asm/device.h>
 #include <asm/gic.h>
 #include <asm/gic_v3_defs.h>
+#include <asm/gic-its.h>
 
 #define its_print(lvl, fmt, ...)                                      \
 	printk(lvl "GIC-ITS:" fmt, ## __VA_ARGS__)
@@ -163,81 +164,11 @@ struct its_cmd_desc {
 	};
 };
 
-/*
- * The ITS command block, which is what the ITS actually parses.
- */
-struct its_cmd_block {
-	u64	raw_cmd[4];
-};
-
 #define ITS_CMD_QUEUE_SZ		SZ_64K
 #define ITS_CMD_QUEUE_NR_ENTRIES	(ITS_CMD_QUEUE_SZ / sizeof(struct its_cmd_block))
 
 typedef struct its_collection *(*its_cmd_builder_t)(struct its_cmd_block *,
 						    struct its_cmd_desc *);
-
-static void its_encode_cmd(struct its_cmd_block *cmd, u8 cmd_nr)
-{
-	cmd->raw_cmd[0] &= ~0xffUL;
-	cmd->raw_cmd[0] |= cmd_nr;
-}
-
-static void its_encode_devid(struct its_cmd_block *cmd, u32 devid)
-{
-	cmd->raw_cmd[0] &= ~(0xffffUL << 32);
-	cmd->raw_cmd[0] |= ((u64)devid) << 32;
-}
-
-static void its_encode_event_id(struct its_cmd_block *cmd, u32 id)
-{
-	cmd->raw_cmd[1] &= ~0xffffffffUL;
-	cmd->raw_cmd[1] |= id;
-}
-
-static void its_encode_phys_id(struct its_cmd_block *cmd, u32 phys_id)
-{
-	cmd->raw_cmd[1] &= 0xffffffffUL;
-	cmd->raw_cmd[1] |= ((u64)phys_id) << 32;
-}
-
-static void its_encode_size(struct its_cmd_block *cmd, u8 size)
-{
-	cmd->raw_cmd[1] &= ~0x1fUL;
-	cmd->raw_cmd[1] |= size & 0x1f;
-}
-
-static void its_encode_itt(struct its_cmd_block *cmd, u64 itt_addr)
-{
-	cmd->raw_cmd[2] &= ~0xffffffffffffUL;
-	cmd->raw_cmd[2] |= itt_addr & 0xffffffffff00UL;
-}
-
-static void its_encode_valid(struct its_cmd_block *cmd, int valid)
-{
-	cmd->raw_cmd[2] &= ~(1UL << 63);
-	cmd->raw_cmd[2] |= ((u64)!!valid) << 63;
-}
-
-static void its_encode_target(struct its_cmd_block *cmd, u64 target_addr)
-{
-	cmd->raw_cmd[2] &= ~(0xffffffffUL << 16);
-	cmd->raw_cmd[2] |= (target_addr & (0xffffffffUL << 16));
-}
-
-static void its_encode_collection(struct its_cmd_block *cmd, u16 col)
-{
-	cmd->raw_cmd[2] &= ~0xffffUL;
-	cmd->raw_cmd[2] |= col;
-}
-
-static inline void its_fixup_cmd(struct its_cmd_block *cmd)
-{
-	/* Let's fixup BE commands */
-	cmd->raw_cmd[0] = cpu_to_le64(cmd->raw_cmd[0]);
-	cmd->raw_cmd[1] = cpu_to_le64(cmd->raw_cmd[1]);
-	cmd->raw_cmd[2] = cpu_to_le64(cmd->raw_cmd[2]);
-	cmd->raw_cmd[3] = cpu_to_le64(cmd->raw_cmd[3]);
-}
 
 static struct its_collection *its_build_mapd_cmd(struct its_cmd_block *cmd,
 						 struct its_cmd_desc *desc)
