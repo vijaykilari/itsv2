@@ -90,22 +90,6 @@ struct its_node {
 
 #define ITS_ITT_ALIGN		SZ_256
 
-/*
- * The ITS view of a device - belongs to an ITS, a collection, owns an
- * interrupt translation table, and a list of interrupts.
- */
-struct its_device {
-	struct list_head	entry;
-	struct its_node		*its;
-	struct its_collection	*collection;
-	void			*itt;
-	unsigned long		*lpi_map;
-	u32			lpi_base;
-	int			nr_lpis;
-	u32			nr_ites;
-	u32			device_id;
-};
-
 static LIST_HEAD(its_nodes);
 static DEFINE_SPINLOCK(its_lock);
 static struct dt_device_node *gic_root_node;

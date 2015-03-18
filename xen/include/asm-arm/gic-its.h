@@ -29,6 +29,22 @@ struct its_cmd_block {
     u64     raw_cmd[4];
 };
 
+/*
+ * The ITS view of a device - belongs to an ITS, a collection, owns an
+ * interrupt translation table, and a list of interrupts.
+ */
+struct its_device {
+        struct list_head        entry;
+        struct its_node         *its;
+        struct its_collection   *collection;
+        void                    *itt;
+        unsigned long           *lpi_map;
+        u32                     lpi_base;
+        int                     nr_lpis;
+        u32                     nr_ites;
+        u32                     device_id;
+};
+
 static inline uint8_t its_decode_cmd(struct its_cmd_block *cmd)
 {
     return cmd->raw_cmd[0] & 0xff;
