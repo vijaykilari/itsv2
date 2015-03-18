@@ -162,6 +162,45 @@ found:
 EXPORT_SYMBOL(find_first_zero_bit);
 #endif
 
+#ifndef bitmap_find_next_zero_area
+/*
+ * bitmap_find_next_zero_area - find a contiguous aligned zero area
+ * @map: The address to base the search on
+ * @size: The bitmap size in bits
+ * @start: The bitnumber to start searching at
+ * @nr: The number of zeroed bits we're looking for
+ * @align_mask: Alignment mask for zero area
+ *
+ * The @align_mask should be one less than a power of 2; the effect is that
+ * the bit offset of all zero areas this function finds is multiples of that
+ * power of 2. A @align_mask of 0 means no alignment is required.
+ */
+#define ALIGN_MASK(x, mask) (((x) + (mask)) & ~(mask))
+
+unsigned long bitmap_find_next_zero_area(unsigned long *map,
+                                         unsigned long size,
+                                         unsigned long start,
+                                         unsigned int nr,
+                                         unsigned long align_mask)
+{
+        unsigned long index, end, i;
+again:
+        index = find_next_zero_bit(map, size, start);
+
+        /* Align allocation */
+        index = ALIGN_MASK(index, align_mask);
+
+        end = index + nr;
+        if (end > size)
+                return end;
+        i = find_next_bit(map, end, index);
+        if (i < end) {
+                start = i + 1;
+                goto again;
+        }
+        return index;
+}
+#endif
 #ifdef __BIG_ENDIAN
 
 /* include/linux/byteorder does not support "unsigned long" type */

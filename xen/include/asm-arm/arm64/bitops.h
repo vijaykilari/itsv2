@@ -67,6 +67,21 @@ extern unsigned long find_next_zero_bit(const unsigned long *addr, unsigned
 		long size, unsigned long offset);
 #endif
 
+#ifndef bitmap_find_next_zero_area
+/*
+ * bitmap_find_next_zero_area - find a contiguous aligned zero area
+ * @map: The address to base the search on
+ * @size: The bitmap size in bits
+ * @start: The bitnumber to start searching at
+ * @nr: The number of zeroed bits we're looking for
+ * @align_mask: Alignment mask for zero area
+ */
+extern unsigned long bitmap_find_next_zero_area(unsigned long *map,
+                                                unsigned long size,
+                                                unsigned long start,
+                                                unsigned int nr,
+                                                unsigned long align_mask);
+#endif
 #ifdef CONFIG_GENERIC_FIND_FIRST_BIT
 
 /**
