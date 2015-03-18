@@ -31,6 +31,7 @@ obj-y += shutdown.o
 obj-y += traps.o
 obj-y += vgic.o vgic-v2.o
 obj-$(CONFIG_ARM_64) += vgic-v3.o
+obj-$(CONFIG_ARM_64) += gic-v3-its.o
 obj-y += vtimer.o
 obj-y += vuart.o
 obj-y += hvm.o
