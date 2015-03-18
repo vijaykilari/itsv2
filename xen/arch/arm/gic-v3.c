@@ -53,6 +53,7 @@ static struct {
     paddr_t dbase;            /* Address of distributor registers */
     paddr_t dbase_size;
     void __iomem *map_dbase;  /* Mapped address of distributor registers */
+    struct rdist_prop rdist_data;
     struct rdist_region *rdist_regions;
     uint32_t  rdist_stride;
     unsigned int rdist_count; /* Number of rdist regions count */
@@ -63,10 +64,10 @@ static struct {
 static struct gic_info gicv3_info;
 
 /* per-cpu re-distributor base */
-static DEFINE_PER_CPU(void __iomem*, rbase);
+DEFINE_PER_CPU(struct rdist, rdist);
 
 #define GICD                   (gicv3.map_dbase)
-#define GICD_RDIST_BASE        (this_cpu(rbase))
+#define GICD_RDIST_BASE        (per_cpu(rdist, smp_processor_id()).rbase)
 #define GICD_RDIST_SGI_BASE    (GICD_RDIST_BASE + SZ_64K)
 
 /*
@@ -609,6 +610,7 @@ static int __init gicv3_populate_rdist(void)
     uint32_t aff;
     uint32_t reg;
     uint64_t typer;
+    uint64_t offset;
     uint64_t mpidr = cpu_logical_map(smp_processor_id());
 
     /*
@@ -644,9 +646,12 @@ static int __init gicv3_populate_rdist(void)
 
             if ( (typer >> 32) == aff )
             {
-                this_cpu(rbase) = ptr;
-                printk("GICv3: CPU%d: Found redistributor in region %d @%p\n",
-                        smp_processor_id(), i, ptr);
+                offset = ptr - gicv3.rdist_regions[i].map_base;
+                per_cpu(rdist, smp_processor_id()).rbase = ptr;
+                per_cpu(rdist, smp_processor_id()).phys_base =  gicv3.rdist_regions[i].base + offset;
+                printk("GICv3: CPU%d: Found redistributor in region %d @%"PRIpaddr"\n",
+                        smp_processor_id(), i,
+                        per_cpu(rdist, smp_processor_id()).phys_base);
                 return 0;
             }
             if ( gicv3.rdist_stride )

@@ -152,6 +152,21 @@
 #define ICH_SGI_IRQ_SHIFT            24
 #define ICH_SGI_IRQ_MASK             0xf
 #define ICH_SGI_TARGETLIST_MASK      0xffff
+
+struct rdist {
+    void __iomem *rbase;
+    void * pend_page;
+    paddr_t phys_base;
+};
+
+struct rdist_prop {
+    void * prop_page;
+    int    id_bits;
+    uint64_t flags;
+};
+
+DECLARE_PER_CPU(struct rdist, rdist);
+
 #endif /* __ASM_ARM_GIC_V3_DEFS_H__ */
 
 /*
