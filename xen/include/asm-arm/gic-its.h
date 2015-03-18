@@ -83,14 +83,6 @@ static inline void its_encode_collection(struct its_cmd_block *cmd, u16 col)
     cmd->raw_cmd[2] |= col;
 }
 
-static inline void its_fixup_cmd(struct its_cmd_block *cmd)
-{
-    /* Let's fixup BE commands */
-    cmd->raw_cmd[0] = cpu_to_le64(cmd->raw_cmd[0]);
-    cmd->raw_cmd[1] = cpu_to_le64(cmd->raw_cmd[1]);
-    cmd->raw_cmd[2] = cpu_to_le64(cmd->raw_cmd[2]);
-    cmd->raw_cmd[3] = cpu_to_le64(cmd->raw_cmd[3]);
-}
 #endif /* __ASM_ARM_GIC_ITS_H__ */
 
 /*
