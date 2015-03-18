@@ -29,6 +29,51 @@ struct its_cmd_block {
     u64     raw_cmd[4];
 };
 
+static inline uint8_t its_decode_cmd(struct its_cmd_block *cmd)
+{
+    return cmd->raw_cmd[0] & 0xff;
+}
+
+static inline uint32_t its_decode_devid(struct its_cmd_block *cmd)
+{
+    return (cmd->raw_cmd[0] >> 32);
+}
+
+static inline uint32_t its_decode_event_id(struct its_cmd_block *cmd)
+{
+    return (uint32_t)cmd->raw_cmd[1];
+}
+
+static inline uint32_t its_decode_phys_id(struct its_cmd_block *cmd)
+{
+    return cmd->raw_cmd[1] >> 32;
+}
+
+static inline uint8_t its_decode_size(struct its_cmd_block *cmd)
+{
+    return (u8)(cmd->raw_cmd[1] & 0xff);
+}
+
+static inline uint64_t its_decode_itt(struct its_cmd_block *cmd)
+{
+    return (cmd->raw_cmd[2] & 0xffffffffff00ULL);
+}
+
+static inline int its_decode_valid(struct its_cmd_block *cmd)
+{
+    return cmd->raw_cmd[2] >> 63;
+}
+
+static inline uint64_t its_decode_target(struct its_cmd_block *cmd)
+{
+    return (cmd->raw_cmd[2] & 0xffffffff0000ULL);
+}
+
+static inline u16 its_decode_collection(struct its_cmd_block *cmd)
+{
+    return (u16)(cmd->raw_cmd[2] & 0xffffULL);
+}
+
 static inline void its_encode_cmd(struct its_cmd_block *cmd, u8 cmd_nr)
 {
     cmd->raw_cmd[0] &= ~0xffUL;
