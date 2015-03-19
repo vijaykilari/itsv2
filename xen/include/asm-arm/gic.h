@@ -20,6 +20,7 @@
 
 #define NR_GIC_LOCAL_IRQS  NR_LOCAL_IRQS
 #define NR_GIC_SGI         16
+#define NR_GIC_LPI         8192
 #define MAX_RDIST_COUNT    4
 
 #define GICD_CTLR       (0x000)
@@ -96,6 +97,7 @@
 #define GICD_TYPE_CPUS_SHIFT 5
 #define GICD_TYPE_CPUS  0x0e0
 #define GICD_TYPE_SEC   0x400
+#define GICD_TYPE_LPIS  (0x1UL << 17)
 
 #define GICC_CTL_ENABLE 0x1
 #define GICC_CTL_EOI    (0x1 << 9)

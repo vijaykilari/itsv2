@@ -101,6 +101,7 @@ struct arch_domain
         paddr_t dbase; /* Distributor base address */
         paddr_t cbase; /* CPU base address */
 #ifdef CONFIG_ARM_64
+	int gicr_ctlr;
         /* GIC V3 addressing */
         paddr_t dbase_size; /* Distributor base size */
         /* List of contiguous occupied by the redistributors */

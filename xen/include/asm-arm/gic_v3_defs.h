@@ -45,6 +45,7 @@
 #define GICC_SRE_EL2_DIB             (1UL << 2)
 #define GICC_SRE_EL2_ENEL1           (1UL << 3)
 
+#define GICR_CTL_ENABLE              (1U << 0)
 /* Additional bits in GICD_TYPER defined by GICv3 */
 #define GICD_TYPE_ID_BITS_SHIFT 19
 
@@ -133,6 +134,7 @@
 
 #define GICR_TYPER_PLPIS             (1U << 0)
 #define GICR_TYPER_VLPIS             (1U << 1)
+#define GICR_TYPER_DISTRIBUTED_IMP   (1U << 3)
 #define GICR_TYPER_LAST              (1U << 4)
 
 #define DEFAULT_PMR_VALUE            0xff

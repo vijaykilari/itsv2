@@ -229,6 +229,7 @@ unsigned long *its_lpi_alloc_chunks(int nirqs, int *base, int *nr_ids);
 uint32_t its_get_pta_type(void);
 uint32_t its_get_nr_its(void);
 struct its_node * its_get_phys_node(uint32_t dev_id);
+int vgic_its_unmap_lpi_prop(struct vcpu *v);
 #endif /* __ASM_ARM_GIC_ITS_H__ */
 
 /*

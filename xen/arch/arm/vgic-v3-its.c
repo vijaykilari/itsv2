@@ -869,6 +869,150 @@ err:
     return 0;
 }
 
+/* Search device structure and get corresponding plpi */
+int vgic_its_get_pid(struct vcpu *v, uint32_t vlpi, uint32_t *plpi)
+{
+    struct domain *d = v->domain;
+    struct its_device *dev;
+    int i = 0;
+
+    spin_lock(&d->arch.vits_devs.lock);
+    list_for_each_entry( dev, &d->arch.vits_devs.dev_list, entry )
+    {
+        i = 0;
+        while ((i = find_next_bit(dev->vlpi_map, dev->nr_lpis, i)) < dev->nr_lpis )
+        {
+            if ( dev->vlpi_entries[i].vlpi == vlpi )
+            {
+                *plpi = dev->vlpi_entries[i].plpi;
+                spin_unlock(&d->arch.vits_devs.lock);
+                return 0;
+            }
+            i++;
+        }
+    }
+    spin_unlock(&d->arch.vits_devs.lock);
+
+    return 1;
+}
+
+static int vgic_v3_gits_lpi_mmio_read(struct vcpu *v, mmio_info_t *info)
+{
+    uint32_t offset;
+    struct hsr_dabt dabt = info->dabt;
+    struct cpu_user_regs *regs = guest_cpu_user_regs();
+    register_t *r = select_user_reg(regs, dabt.reg);
+    uint8_t cfg;
+
+    offset = info->gpa -
+             (v->domain->arch.lpi_conf->propbase & 0xfffffffff000UL);
+
+    if ( offset < SZ_64K )
+    {
+        DPRINTK("vITS: LPI Table read offset 0x%x\n", offset );
+        cfg = readb_relaxed(v->domain->arch.lpi_conf->prop_page + offset);
+        *r = cfg;
+        return 1;
+    }
+    else
+        dprintk(XENLOG_ERR, "vITS: LPI Table read with wrong offset 0x%x\n",
+                offset);
+
+    return 0;
+}
+
+static int vgic_v3_gits_lpi_mmio_write(struct vcpu *v, mmio_info_t *info)
+{
+    uint32_t offset;
+    uint32_t pid, vid;
+    uint8_t cfg;
+    bool_t enable;
+    struct hsr_dabt dabt = info->dabt;
+    struct cpu_user_regs *regs = guest_cpu_user_regs();
+    register_t *r = select_user_reg(regs, dabt.reg);
+
+    offset = info->gpa -
+             (v->domain->arch.lpi_conf->propbase & 0xfffffffff000UL);
+
+    vid = offset + NR_GIC_LPI;
+    if ( offset < SZ_64K )
+    {
+        DPRINTK("vITS: LPI Table write offset 0x%x\n", offset );
+        if ( vgic_its_get_pid(v, vid, &pid) )
+        {
+            dprintk(XENLOG_ERR, "vITS: pID not found for vid %d\n", vid);
+            return 0;
+        }
+      
+        cfg = readb_relaxed(v->domain->arch.lpi_conf->prop_page + offset);
+        enable = (cfg & *r) & 0x1;
+
+        if ( !enable )
+             vgic_its_enable_lpis(v, pid);
+        else
+             vgic_its_disable_lpis(v, pid);
+
+        /* Update virtual prop page */
+        writeb_relaxed((*r & 0xff),
+                        v->domain->arch.lpi_conf->prop_page + offset);
+        
+        return 1;
+    }
+    else
+        dprintk(XENLOG_ERR, "vITS: LPI Table write with wrong offset 0x%x\n",
+                offset);
+
+    return 0; 
+}
+
+static const struct mmio_handler_ops vgic_gits_lpi_mmio_handler = {
+    .read_handler  = vgic_v3_gits_lpi_mmio_read,
+    .write_handler = vgic_v3_gits_lpi_mmio_write,
+};
+
+int vgic_its_unmap_lpi_prop(struct vcpu *v)
+{
+    paddr_t maddr;
+    uint32_t lpi_size;
+    int i;
+    
+    maddr = v->domain->arch.lpi_conf->propbase & 0xfffffffff000UL;
+    lpi_size = 1UL << ((v->domain->arch.lpi_conf->propbase & 0x1f) + 1);
+
+    DPRINTK("vITS: Unmap guest LPI conf table maddr 0x%lx lpi_size 0x%x\n", 
+             maddr, lpi_size);
+
+    if ( lpi_size < SZ_64K )
+    {
+        dprintk(XENLOG_ERR, "vITS: LPI Prop page < 64K\n");
+        return 0;
+    }
+
+    /* XXX: As per 4.8.9 each re-distributor shares a common LPI configuration table 
+     * So one set of mmio handlers to manage configuration table is enough
+     */
+    for ( i = 0; i < lpi_size / PAGE_SIZE; i++ )
+        guest_physmap_remove_page(v->domain, paddr_to_pfn(maddr),
+                                gmfn_to_mfn(v->domain, paddr_to_pfn(maddr)), 0);
+
+    /* Register mmio handlers for this region */
+    register_mmio_handler(v->domain, &vgic_gits_lpi_mmio_handler,
+                          maddr, lpi_size);
+
+    /* Allocate Virtual LPI Property table */
+    v->domain->arch.lpi_conf->prop_page =
+        alloc_xenheap_pages(get_order_from_bytes(lpi_size), 0);
+    if ( !v->domain->arch.lpi_conf->prop_page )
+    {
+        dprintk(XENLOG_ERR, "vITS: Failed to allocate LPI Prop page\n");
+        return 0;
+    }
+
+    memset(v->domain->arch.lpi_conf->prop_page, 0xa2, lpi_size);
+
+    return 1;
+}
+
 struct vgic_its *its_to_vits(struct vcpu *v, paddr_t phys_base)
 {
     struct vgic_its *vits = NULL;

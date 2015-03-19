@@ -30,6 +30,7 @@
 #include <asm/mmio.h>
 #include <asm/gic_v3_defs.h>
 #include <asm/gic.h>
+#include <asm/gic-its.h>
 #include <asm/vgic.h>
 
 /* GICD_PIDRn register values for ARM implementations */
@@ -99,20 +100,30 @@ static int __vgic_v3_rdistr_rd_mmio_read(struct vcpu *v, mmio_info_t *info,
     switch ( gicr_reg )
     {
     case GICR_CTLR:
-        /* We have not implemented LPI's, read zero */
-        goto read_as_zero_32;
+        /*
+         * Enable LPI's for ITS. Direct injection of LPI
+         * by writing to GICR_{SET,CLR}LPIR are not supported
+         */
+        if ( dabt.size != DABT_WORD ) goto bad_width;
+        vgic_lock(v);
+        *r = v->domain->arch.vgic.gicr_ctlr;
+        vgic_unlock(v);
+        return 1;
     case GICR_IIDR:
         if ( dabt.size != DABT_WORD ) goto bad_width;
         *r = GICV3_GICR_IIDR_VAL;
         return 1;
     case GICR_TYPER:
-        if ( dabt.size != DABT_DOUBLE_WORD ) goto bad_width;
-        /* TBD: Update processor id in [23:8] when ITS support is added */
+        if ( dabt.size != DABT_WORD && dabt.size != DABT_DOUBLE_WORD )
+            goto bad_width;
+        /* XXX: Update processor id in [23:8] if GITS_TYPER: PTA is not set */
         aff = (MPIDR_AFFINITY_LEVEL(v->arch.vmpidr, 3) << 56 |
                MPIDR_AFFINITY_LEVEL(v->arch.vmpidr, 2) << 48 |
                MPIDR_AFFINITY_LEVEL(v->arch.vmpidr, 1) << 40 |
                MPIDR_AFFINITY_LEVEL(v->arch.vmpidr, 0) << 32);
         *r = aff;
+        /* Set LPI support */
+        aff |= (GICR_TYPER_DISTRIBUTED_IMP | GICR_TYPER_PLPIS);
 
         if ( v->arch.vgic.flags & VGIC_V3_RDIST_LAST )
             *r |= GICR_TYPER_LAST;
@@ -131,10 +142,13 @@ static int __vgic_v3_rdistr_rd_mmio_read(struct vcpu *v, mmio_info_t *info,
         /* WO. Read as zero */
         goto read_as_zero_64;
     case GICR_PROPBASER:
-        /* LPI's not implemented */
-        goto read_as_zero_64;
+        if ( dabt.size != DABT_DOUBLE_WORD ) goto bad_width;
+        /* Remove shareability attribute we don't want dom to flush */
+        *r = v->domain->arch.lpi_conf->propbase;
+        return 1;
     case GICR_PENDBASER:
-        /* LPI's not implemented */
+        if ( dabt.size != DABT_DOUBLE_WORD ) goto bad_width;
+        *r = v->domain->arch.lpi_conf->pendbase[v->vcpu_id];
         goto read_as_zero_64;
     case GICR_INVLPIR:
         /* WO. Read as zero */
@@ -209,8 +223,15 @@ static int __vgic_v3_rdistr_rd_mmio_write(struct vcpu *v, mmio_info_t *info,
     switch ( gicr_reg )
     {
     case GICR_CTLR:
-        /* LPI's not implemented */
-        goto write_ignore_32;
+        /*
+         * Enable LPI's for ITS. Direct injection of LPI
+         * by writing to GICR_{SET,CLR}LPIR are not supported
+         */
+        if ( dabt.size != DABT_WORD ) goto bad_width;
+        vgic_lock(v);
+        v->domain->arch.vgic.gicr_ctlr = (*r) & GICR_CTL_ENABLE;
+        vgic_unlock(v);
+        return 1;
     case GICR_IIDR:
         /* RO */
         goto write_ignore_32;
@@ -230,11 +251,26 @@ static int __vgic_v3_rdistr_rd_mmio_write(struct vcpu *v, mmio_info_t *info,
         /* LPI is not implemented */
         goto write_ignore_64;
     case GICR_PROPBASER:
-        /* LPI is not implemented */
-        goto write_ignore_64;
+        if ( dabt.size != DABT_DOUBLE_WORD ) goto bad_width;
+        vgic_lock(v);
+        /* LPI configuration tables are shared across cpus. Should be same */
+        if ( (v->domain->arch.lpi_conf->propbase != 0) && 
+             ((v->domain->arch.lpi_conf->propbase & 0xfffffffff000UL) !=  (*r & 0xfffffffff000UL)) )
+        {
+            dprintk(XENLOG_ERR,
+                "vGICv3: vITS: Wrong configuration of LPI_PROPBASER\n");
+            return 0;
+        }     
+        v->domain->arch.lpi_conf->propbase = *r;
+        vgic_unlock(v);
+        return vgic_its_unmap_lpi_prop(v);
     case GICR_PENDBASER:
-        /* LPI is not implemented */
-        goto write_ignore_64;
+        /* Just hold pendbaser value for guest read */
+        if ( dabt.size != DABT_DOUBLE_WORD ) goto bad_width;
+        vgic_lock(v);
+        v->domain->arch.lpi_conf->pendbase[v->vcpu_id] = *r;
+        vgic_unlock(v);
+        return 1;
     case GICR_INVLPIR:
         /* LPI is not implemented */
         goto write_ignore_64;
@@ -703,7 +739,7 @@ static int vgic_v3_distr_mmio_read(struct vcpu *v, mmio_info_t *info)
               ((v->domain->arch.vgic.nr_spis / 32) & GICD_TYPE_LINES));
 
         *r |= (irq_bits - 1) << GICD_TYPE_ID_BITS_SHIFT;
-
+        *r |= GICD_TYPE_LPIS;
         return 1;
     }
     case GICD_STATUSR:
