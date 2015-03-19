@@ -1098,7 +1098,12 @@ void its_domain_init(uint32_t its_nr, struct domain *d)
 		d->arch.vits[its_nr].phys_size = its->phys_size;
 		d->arch.vits[its_nr].its  = its;
 	}
-	/* TODO: Update for DomU */
+	else
+	{
+		/* Only one vITS is supported for DomU */
+		d->arch.vits[0].phys_base = GUEST_GICV3_ITS_BASE ;
+		d->arch.vits[0].phys_size = GUEST_GICV3_ITS_SIZE;
+	}
 }
 
 static int its_probe(struct dt_device_node *node)

@@ -53,6 +53,7 @@ static struct arch_info {
 enum {
     PHANDLE_NONE = 0,
     PHANDLE_GIC,
+    PHANDLE_ITS,
 };
 
 typedef uint32_t be32;
@@ -362,6 +363,36 @@ static int make_gicv2_node(libxl__gc *gc, void *fdt,
     return 0;
 }
 
+static int make_its_node(libxl__gc *gc, void *fdt,
+                         uint64_t its_base, uint64_t its_size)
+{
+    int res;
+    const char *name = GCSPRINTF("gic-its@%"PRIx64, its_base);
+
+    res = fdt_begin_node(fdt, name);
+    if (res) return res;
+
+    res = fdt_property_compat(gc, fdt, 1,
+                              "arm,gic-v3-its");
+    if (res) return res;
+
+    res = fdt_property(fdt, "msi-controller", NULL, 0);
+    if (res) return res;
+
+    res = fdt_property_regs(gc, fdt, ROOT_ADDRESS_CELLS, ROOT_SIZE_CELLS,
+                            1,
+                            its_base, its_size);
+    if (res) return res;
+
+    res = fdt_property_cell(fdt, "phandle", PHANDLE_ITS);
+    if (res) return res;
+
+    res = fdt_end_node(fdt);
+    if (res) return res;
+
+    return 0;
+}
+
 static int make_gicv3_node(libxl__gc *gc, void *fdt)
 {
     int res;
@@ -600,6 +631,11 @@ next_resize:
             break;
         case XEN_DOMCTL_CONFIG_GIC_V3:
             FDT( make_gicv3_node(gc, fdt) );
+            /*
+             * TODO: Need to generate based on Config and its node should be
+             * generated inside gicv3 node
+             */
+            FDT( make_its_node(gc, fdt, GUEST_GICV3_ITS_BASE, GUEST_GICV3_ITS_SIZE) );
             break;
         default:
             LOG(ERROR, "Unknown GIC version %d", config.gic_version);
