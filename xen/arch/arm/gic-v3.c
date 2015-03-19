@@ -40,6 +40,7 @@
 #include <asm/device.h>
 #include <asm/gic.h>
 #include <asm/gic_v3_defs.h>
+#include <asm/gic-its.h>
 #include <asm/cpufeature.h>
 
 struct rdist_region {
@@ -427,12 +428,18 @@ static void gicv3_poke_irq(struct irq_desc *irqd, u32 offset)
 
 static void gicv3_unmask_irq(struct irq_desc *irqd)
 {
-    gicv3_poke_irq(irqd, GICD_ISENABLER);
+    if ( is_lpi(irqd->irq) )
+        lpi_set_config(irqd, 1);
+    else
+        gicv3_poke_irq(irqd, GICD_ISENABLER);
 }
 
 static void gicv3_mask_irq(struct irq_desc *irqd)
 {
-    gicv3_poke_irq(irqd, GICD_ICENABLER);
+    if ( is_lpi(irqd->irq) )
+        lpi_set_config(irqd, 0);
+    else
+        gicv3_poke_irq(irqd, GICD_ICENABLER);
 }
 
 static void gicv3_eoi_irq(struct irq_desc *irqd)
@@ -1070,13 +1077,18 @@ static void gicv3_irq_set_affinity(struct irq_desc *desc, const cpumask_t *mask)
     spin_lock(&gicv3.lock);
 
     cpu = gicv3_get_cpu_from_mask(mask);
-    affinity = gicv3_mpidr_to_affinity(cpu);
-    /* Make sure we don't broadcast the interrupt */
-    affinity &= ~GICD_IROUTER_SPI_MODE_ANY;
 
-    if ( desc->irq >= NR_GIC_LOCAL_IRQS )
-        writeq_relaxed(affinity, (GICD + GICD_IROUTER + desc->irq * 8));
+    if ( is_lpi(desc->irq) )
+        its_set_affinity(desc, cpu);
+    else
+    {
+        affinity = gicv3_mpidr_to_affinity(cpu);
+        /* Make sure we don't broadcast the interrupt */
+        affinity &= ~GICD_IROUTER_SPI_MODE_ANY;
 
+        if ( desc->irq >= NR_GIC_LOCAL_IRQS )
+            writeq_relaxed(affinity, (GICD + GICD_IROUTER + desc->irq * 8));
+    }
     spin_unlock(&gicv3.lock);
 }
 

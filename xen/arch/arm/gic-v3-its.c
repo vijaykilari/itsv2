@@ -440,7 +440,7 @@ post:
 	its_wait_for_range_completion(its, cmd, next_cmd);
 }
 
-void its_send_inv(struct its_device *dev, u32 event_id)
+static void its_send_inv(struct its_device *dev, u32 event_id)
 {
 	struct its_cmd_desc desc;
 
@@ -461,8 +461,7 @@ static void its_send_mapc(struct its_node *its, struct its_collection *col,
 	its_send_single_command(its, its_build_mapc_cmd, &desc);
 }
 
-/* TODO: Remove static for the sake of compilation */
-void its_send_movi(struct its_node *its, struct its_collection *col,
+static void its_send_movi(struct its_node *its, struct its_collection *col,
 	           u32 dev_id, u32 id)
 {
 	struct its_cmd_desc desc;
@@ -483,28 +482,19 @@ static void its_send_invall(struct its_node *its, struct its_collection *col)
 	its_send_single_command(its, its_build_invall_cmd, &desc);
 }
 
-/*
- * The below irqchip functions are no more required.
- * TODO: Will be implemented as separate patch
- */
-#if 0
-/*
- * irqchip functions - assumes MSI, mostly.
- */
-
-static inline u32 its_get_event_id(struct irq_data *d)
+static inline u32 its_get_event_id(struct irq_desc *d)
 {
-	struct its_device *its_dev = irq_data_get_irq_chip_data(d);
-	return d->hwirq - its_dev->lpi_base;
+	struct its_device *its_dev = irq_get_desc_data(d);
+	return d->irq - its_dev->lpi_base;
 }
 
-static void lpi_set_config(struct irq_data *d, bool enable)
+void lpi_set_config(struct irq_desc *d, int enable)
 {
-	struct its_device *its_dev = irq_data_get_irq_chip_data(d);
-	irq_hw_number_t hwirq = d->hwirq;
+	u8 *cfg;
 	u32 id = its_get_event_id(d);
-	u8 *cfg = page_address(gic_rdists->prop_page) + hwirq - 8192;
+	struct its_device *its_dev = irq_get_desc_data(d);
 
+	cfg = gic_rdists->prop_page + d->irq - NR_GIC_LPI;
 	if (enable)
 		*cfg |= LPI_PROP_ENABLED;
 	else
@@ -516,88 +506,25 @@ static void lpi_set_config(struct irq_data *d, bool enable)
 	 * Humpf...
 	 */
 	if (gic_rdists->flags & RDIST_FLAGS_PROPBASE_NEEDS_FLUSHING)
-		__flush_dcache_area(cfg, sizeof(*cfg));
+		clean_and_invalidate_dcache_va_range(cfg, sizeof(*cfg));
 	else
 		dsb(ishst);
+
 	its_send_inv(its_dev, id);
 }
 
-static void its_mask_irq(struct irq_data *d)
+void its_set_affinity(struct irq_desc *d, int cpu)
 {
-	lpi_set_config(d, false);
-}
-
-static void its_unmask_irq(struct irq_data *d)
-{
-	lpi_set_config(d, true);
-}
-
-static void its_eoi_irq(struct irq_data *d)
-{
-	gic_write_eoir(d->hwirq);
-}
-
-static int its_set_affinity(struct irq_data *d, const struct cpumask *mask_val,
-			    bool force)
-{
-	unsigned int cpu = cpumask_any_and(mask_val, cpu_online_mask);
-	struct its_device *its_dev = irq_data_get_irq_chip_data(d);
+	struct its_device *its_dev = irq_get_desc_data(d);
 	struct its_collection *target_col;
 	u32 id = its_get_event_id(d);
 
-	if (cpu >= nr_cpu_ids)
-		return -EINVAL;
-
+	/* Physical collection id */
 	target_col = &its_dev->its->collections[cpu];
-	its_send_movi(its_dev, target_col, id);
 	its_dev->collection = target_col;
 
-	return IRQ_SET_MASK_OK_DONE;
+	its_send_movi(its_dev->its, target_col, its_dev->device_id, id);
 }
-
-static void its_irq_compose_msi_msg(struct irq_data *d, struct msi_msg *msg)
-{
-	struct its_device *its_dev = irq_data_get_irq_chip_data(d);
-	struct its_node *its;
-	u64 addr;
-
-	its = its_dev->its;
-	addr = its->phys_base + GITS_TRANSLATER;
-
-	msg->address_lo		= addr & ((1UL << 32) - 1);
-	msg->address_hi		= addr >> 32;
-	msg->data		= its_get_event_id(d);
-}
-
-static struct irq_chip its_irq_chip = {
-	.name			= "ITS",
-	.irq_mask		= its_mask_irq,
-	.irq_unmask		= its_unmask_irq,
-	.irq_eoi		= its_eoi_irq,
-	.irq_set_affinity	= its_set_affinity,
-	.irq_compose_msi_msg	= its_irq_compose_msi_msg,
-};
-
-static void its_mask_msi_irq(struct irq_data *d)
-{
-	pci_msi_mask_irq(d);
-	irq_chip_mask_parent(d);
-}
-
-static void its_unmask_msi_irq(struct irq_data *d)
-{
-	pci_msi_unmask_irq(d);
-	irq_chip_unmask_parent(d);
-}
-
-static struct irq_chip its_msi_irq_chip = {
-	.name			= "ITS-MSI",
-	.irq_unmask		= its_unmask_msi_irq,
-	.irq_mask		= its_mask_msi_irq,
-	.irq_eoi		= irq_chip_eoi_parent,
-	.irq_write_msi_msg	= pci_msi_domain_write_msg,
-};
-#endif
 
 /*
  * How we allocate LPIs:

@@ -225,6 +225,8 @@ int its_alloc_device_irq(struct its_device *dev, uint32_t *plpi);
 int gic_its_send_cmd(struct vcpu *v, struct its_node *its,
                      struct its_cmd_block *phys_cmd, int send_all);
 void its_lpi_free(unsigned long *bitmap, int base, int nr_ids);
+void its_set_affinity(struct irq_desc *d, int cpu);
+void lpi_set_config(struct irq_desc *d, int enable);
 unsigned long *its_lpi_alloc_chunks(int nirqs, int *base, int *nr_ids);
 uint32_t its_get_pta_type(void);
 uint32_t its_get_nr_its(void);
