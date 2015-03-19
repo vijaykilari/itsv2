@@ -56,6 +56,14 @@
 
 #define its_warn(fmt, ...)                                            \
 
+//#define DEBUG_GIC_ITS
+
+#ifdef DEBUG_GIC_ITS
+# define DPRINTK(fmt, args...) printk(XENLOG_DEBUG fmt, ##args)
+#else
+# define DPRINTK(fmt, args...) do {} while ( 0 )
+#endif
+
 #define ITS_FLAGS_CMDQ_NEEDS_FLUSHING		(1 << 0)
 
 #define RDIST_FLAGS_PROPBASE_NEEDS_FLUSHING	(1 << 0)
@@ -68,6 +76,7 @@
 struct its_collection {
 	u64			target_address;
 	u16			col_id;
+	u16			valid;
 };
 
 /*
@@ -80,13 +89,18 @@ struct its_node {
 	struct list_head	entry;
 	void __iomem		*base;
 	unsigned long		phys_base;
+	unsigned long		phys_size;
 	struct its_cmd_block	*cmd_base;
 	struct its_cmd_block	*cmd_write;
 	void			*tables[GITS_BASER_NR_REGS];
 	struct its_collection	*collections;
 	u64			flags;
 	u32			ite_size;
+	u32			nr_collections;
+	struct dt_device_node	*dt_node;
 };
+
+uint32_t pta_type;
 
 #define ITS_ITT_ALIGN		SZ_256
 
@@ -126,6 +140,123 @@ struct its_cmd_desc {
 		} its_invall_cmd;
 	};
 };
+
+uint32_t its_get_pta_type(void)
+{
+	return pta_type;
+}
+
+struct its_node * its_get_phys_node(uint32_t dev_id)
+{
+	struct its_node *its;
+
+	/* TODO: For now return ITS0 node.
+	 * Need Query PCI helper function to get on which
+	 * ITS node the device is attached
+	 */
+	list_for_each_entry(its, &its_nodes, entry) {
+		return its;
+	}
+
+	return NULL;
+}
+
+static int its_search_rdist_address(struct domain *d, uint64_t ta,
+				    uint32_t *col_id)
+{
+	int i, rg;
+	paddr_t start, end;
+
+	for (rg = 0; rg < d->arch.vgic.nr_regions; rg++) {
+		i = 0;
+		start = d->arch.vgic.rdist_regions[rg].base;
+		end = d->arch.vgic.rdist_regions[rg].base +
+			d->arch.vgic.rdist_regions[rg].size;
+		while ((( start + i * d->arch.vgic.rdist_stride) < end)) {
+			if ((start + i * d->arch.vgic.rdist_stride) == ta) {
+				DPRINTK("ITS: Found pta 0x%lx\n", ta);
+				*col_id = i;
+				return 0;
+			}
+			i++;
+		}
+	}
+	return 1;
+}
+
+int its_get_physical_cid(struct domain *d, uint32_t *col_id, uint64_t ta)
+{
+	int i;
+	struct its_collection *col;
+
+	/*
+	* For Dom0, the target address info is collected
+	* at boot time.
+	*/
+	if (is_hardware_domain(d)) {
+		struct its_node *its;
+
+		list_for_each_entry(its, &its_nodes, entry) {
+			for (i = 0; i < its->nr_collections; i++) {
+		                col = &its->collections[i];
+				if (col->valid && col->target_address == ta) {
+					DPRINTK("ITS:Match ta 0x%lx ta 0x%lx\n",
+						col->target_address, ta);
+					*col_id = col->col_id;
+					return 0;
+				}
+			}
+			/* All collections are mapped on every physical ITS */
+			break;
+		}
+	}
+	else
+	{
+		/* As per Spec, Target address is re-distributor
+		 * address/cpu number.
+		 * We cannot rely on collection id as it can any number.
+		 * So here we should rely only on vta address to map the
+		 * collection. For domU, vta != target address.
+		 * So, check vta is corresponds to which GICR region and
+		 * consider that vcpu id as collection id.
+		 */
+		if (its_get_pta_type()) {
+			its_search_rdist_address(d, ta, col_id);
+		}
+		else
+		{
+			*col_id = ta;
+			return 0;
+		}
+	}
+
+	DPRINTK("ITS: Cannot find valid pta entry for ta 0x%lx\n", ta);
+	return 1;
+}
+
+int its_get_target(uint8_t pcid, uint64_t *pta)
+{
+	int i;
+	struct its_collection *col;
+	struct its_node *its;
+
+	list_for_each_entry(its, &its_nodes, entry) {
+		for (i = 0; i < its->nr_collections; i++) {
+			col = &its->collections[i];
+			if (col->valid && col->col_id == pcid) {
+				*pta = col->target_address;
+				DPRINTK("ITS:Match pta 0x%lx vta 0x%lx\n",
+					col->target_address, *pta);
+				return 0;
+			}
+		}
+		/* All collections are mapped on every physical ITS */
+		break;
+	}
+
+	DPRINTK("ITS: Cannot find valid pta entry for vta 0x%lx\n",*pta);
+	return 1;
+}
 
 #define ITS_CMD_QUEUE_SZ		SZ_64K
 #define ITS_CMD_QUEUE_NR_ENTRIES	(ITS_CMD_QUEUE_SZ / sizeof(struct its_cmd_block))
@@ -541,7 +672,6 @@ out:
 	return bitmap;
 }
 
-/* TODO: Remove static for the sake of compilation */
 void its_lpi_free(unsigned long *bitmap, int base, int nr_ids)
 {
 	int lpi;
@@ -859,6 +989,8 @@ static void its_cpu_init_collection(void)
 		/* Perform collection mapping */
 		its->collections[cpu].target_address = target;
 		its->collections[cpu].col_id = cpu;
+		its->collections[cpu].valid = 1;
+		its->nr_collections++;
 
 		its_send_mapc(its, &its->collections[cpu], 1);
 		its_send_invall(its, &its->collections[cpu]);
@@ -867,8 +999,7 @@ static void its_cpu_init_collection(void)
 	spin_unlock(&its_lock);
 }
 
-/* TODO: Remove static for the sake of compilation */
-int its_alloc_device_irq(struct its_device *dev, int *hwirq)
+int its_alloc_device_irq(struct its_device *dev, uint32_t *hwirq)
 {
 	int idx;
 
@@ -880,6 +1011,47 @@ int its_alloc_device_irq(struct its_device *dev, int *hwirq)
 	set_bit(idx, dev->lpi_map);
 
 	return 0;
+}
+
+static int its_send_cmd(struct vcpu *v, struct its_node *its,
+			struct its_cmd_block *phys_cmd)
+{
+	struct its_cmd_block *cmd, *next_cmd;
+
+	spin_lock(&its->lock);
+
+	cmd = its_allocate_entry(its);
+	if (!cmd)
+		return 0;
+
+	cmd->raw_cmd[0] = phys_cmd->raw_cmd[0];
+	cmd->raw_cmd[1] = phys_cmd->raw_cmd[1];
+	cmd->raw_cmd[2] = phys_cmd->raw_cmd[2];
+	cmd->raw_cmd[3] = phys_cmd->raw_cmd[3];
+	its_flush_cmd(its, cmd);
+
+	next_cmd = its_post_commands(its);
+	spin_unlock(&its->lock);
+
+	its_wait_for_range_completion(its, cmd, next_cmd);
+
+	return 1;
+}
+
+int gic_its_send_cmd(struct vcpu *v, struct its_node *its,
+		     struct its_cmd_block *phys_cmd, int send_all)
+{
+	struct its_node *pits;
+	int ret = 0;
+
+	if (send_all) {
+		list_for_each_entry(pits, &its_nodes, entry)
+		ret = its_send_cmd(v, pits, phys_cmd);
+	}
+	else
+		return its_send_cmd(v, its, phys_cmd);
+
+	return ret;
 }
 
 static int its_force_quiescent(void __iomem *base)
@@ -955,9 +1127,16 @@ static int its_probe(struct dt_device_node *node)
 
 	spin_lock_init(&its->lock);
 	INIT_LIST_HEAD(&its->entry);
+	its->dt_node = node;
 	its->base = its_base;
 	its->phys_base = its_addr;
+	its->phys_size = its_size;
 	its->ite_size = ((readl_relaxed(its_base + GITS_TYPER) >> 4) & 0xf) + 1;
+
+	if ( (readq_relaxed(its->base + GITS_TYPER) & GITS_TYPER_PTA) )
+		pta_type = 1;
+	else
+		pta_type = 0;
 
 	its->cmd_base = xzalloc_bytes(ITS_CMD_QUEUE_SZ);
 	if (!its->cmd_base) {

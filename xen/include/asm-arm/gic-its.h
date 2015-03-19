@@ -22,6 +22,72 @@
 #ifndef __ASM_ARM_GIC_ITS_H__
 #define __ASM_ARM_GIC_ITS_H__
 
+#include <asm/gic_v3_defs.h>
+
+struct its_node;
+
+/* Collection ID mapping */
+struct cid_mapping
+{
+    uint8_t nr_cid;
+    /* XXX: assume one collection id per vcpu. can set to MAX_VCPUS? */
+    /* Virtual Collection id */
+    uint8_t vcid[32];
+    /* Physical Collection id */
+    uint8_t pcid[32];
+    /* Virtual target address of this collection id */
+    uint64_t vta[32];
+};
+
+/*
+ * Per domain virtual ITS structure.
+ * One per Physical ITS node available for the domain
+ */
+ 
+struct vgic_its
+{
+   spinlock_t lock;
+   /* Emulation of BASER */
+   paddr_t baser[8];
+   /* Command queue base */
+   paddr_t cmd_base;
+   /* Command queue write pointer */
+   paddr_t cmd_write;
+   /* Command queue write saved pointer */
+   paddr_t cmd_write_save;
+   /* Command queue read pointer */
+   paddr_t cmd_read;
+   /* Command queue size */
+   unsigned long cmd_qsize;
+   /* ITS mmio physical base */
+   paddr_t phys_base;
+   /* ITS mmio physical size */
+   unsigned long phys_size;
+   /* ITS physical node */
+   struct its_node *its;
+   /* GICR ctrl register */
+   uint32_t ctrl;
+   /* Virtual to Physical Collection id mapping */
+   struct cid_mapping cid_map;
+};
+
+struct vgic_lpi_conf
+{
+   /* LPI propbase */
+   paddr_t propbase;
+   /* percpu pendbase */
+   paddr_t pendbase[MAX_VIRT_CPUS];
+   /* Virtual LPI property table */
+   void * prop_page;
+};
+
+struct vid_map
+{
+    uint32_t vlpi;
+    uint32_t plpi;
+    uint32_t id;
+};
+
 /*
  * The ITS command block, which is what the ITS actually parses.
  */
@@ -37,12 +103,21 @@ struct its_device {
         struct list_head        entry;
         struct its_node         *its;
         struct its_collection   *collection;
-        void                    *itt;
+        /* Virtual ITS node */
+        struct vgic_its         *vits;
+        paddr_t                 itt_addr;
+        unsigned long           itt_size;
         unsigned long           *lpi_map;
         u32                     lpi_base;
         int                     nr_lpis;
         u32                     nr_ites;
         u32                     device_id;
+        /* Spinlock for vlpi allocation */
+        spinlock_t              vlpi_lock;
+        /* vlpi bitmap */
+        unsigned long           *vlpi_map;
+        /* vlpi <=> plpi mapping */
+        struct vid_map          *vlpi_entries;
 };
 
 static inline uint8_t its_decode_cmd(struct its_cmd_block *cmd)
@@ -144,6 +219,15 @@ static inline void its_encode_collection(struct its_cmd_block *cmd, u16 col)
     cmd->raw_cmd[2] |= col;
 }
 
+int its_get_physical_cid(struct domain *d, uint32_t *col_id, uint64_t ta);
+int its_get_target(uint8_t pcid, uint64_t *pta);
+int its_alloc_device_irq(struct its_device *dev, uint32_t *plpi);
+int gic_its_send_cmd(struct vcpu *v, struct its_node *its,
+                     struct its_cmd_block *phys_cmd, int send_all);
+void its_lpi_free(unsigned long *bitmap, int base, int nr_ids);
+unsigned long *its_lpi_alloc_chunks(int nirqs, int *base, int *nr_ids);
+uint32_t its_get_pta_type(void);
+struct its_node * its_get_phys_node(uint32_t dev_id);
 #endif /* __ASM_ARM_GIC_ITS_H__ */
 
 /*

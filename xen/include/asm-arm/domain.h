@@ -114,6 +114,15 @@ struct arch_domain
 #endif
     } vgic;
 
+    struct vgic_its *vits;
+    struct vgic_lpi_conf *lpi_conf;
+
+    struct vits_devs {
+        spinlock_t lock;
+        /* ITS Device list */
+        struct list_head dev_list;
+    } vits_devs;
+
     struct vuart {
 #define VUART_BUF_SIZE 128
         char                        *buf;
