@@ -869,6 +869,418 @@ err:
     return 0;
 }
 
+struct vgic_its *its_to_vits(struct vcpu *v, paddr_t phys_base)
+{
+    struct vgic_its *vits = NULL;
+    int i;
+
+    /* Mask 64K offset */
+    phys_base = phys_base & ~(SZ_64K - 1);
+    if ( is_hardware_domain(v->domain) )
+    {
+        for ( i = 0; i < its_get_nr_its(); i++ )
+        {
+            if ( v->domain->arch.vits[i].phys_base == phys_base )
+            {
+                vits =  &v->domain->arch.vits[i];
+                break;
+            }
+        }
+    }
+    else
+        vits = &v->domain->arch.vits[0];
+
+    return vits;
+}
+
+static inline void vits_spin_lock(struct vgic_its *vits)
+{
+    spin_lock(&vits->lock);
+}
+
+static inline void vits_spin_unlock(struct vgic_its *vits)
+{
+    spin_unlock(&vits->lock);
+}
+
+static int vgic_v3_gits_mmio_read(struct vcpu *v, mmio_info_t *info)
+{
+    struct vgic_its *vits;
+    struct hsr_dabt dabt = info->dabt;
+    struct cpu_user_regs *regs = guest_cpu_user_regs();
+    register_t *r = select_user_reg(regs, dabt.reg);
+    uint64_t val = 0;
+    uint32_t index, gits_reg;
+
+    vits = its_to_vits(v, info->gpa);
+    if ( vits == NULL ) BUG_ON(1);
+
+    gits_reg = info->gpa - vits->phys_base;
+
+    if ( gits_reg >= SZ_64K )
+    {
+        gdprintk(XENLOG_G_WARNING, "vGITS: unknown gpa read address \
+                  %"PRIpaddr"\n", info->gpa);
+        return 0;
+    }
+
+    switch ( gits_reg )
+    {
+    case GITS_CTLR:
+        if ( dabt.size != DABT_WORD ) goto bad_width;
+        return 1;
+    case GITS_IIDR:
+        if ( dabt.size != DABT_WORD ) goto bad_width;
+        return 1;
+    case GITS_TYPER:
+         /* GITS_TYPER support word read */
+        vits_spin_lock(vits);
+        val = ((its_get_pta_type() << VITS_GITS_TYPER_PTA_SHIFT) |
+               VITS_GITS_TYPER_HCC   | VITS_GITS_DEV_BITS |
+               VITS_GITS_ID_BITS     | VITS_GITS_ITT_SIZE |
+               VITS_GITS_DISTRIBUTED | VITS_GITS_PLPIS);
+        if ( dabt.size == DABT_DOUBLE_WORD )
+            *r = val;
+        else if ( dabt.size == DABT_WORD )
+            *r = (u32)(val >> 32);
+        else
+        {
+            vits_spin_unlock(vits);
+            goto bad_width;
+        }
+        vits_spin_unlock(vits);
+        return 1;
+    case GITS_TYPER + 4:
+        if (dabt.size != DABT_WORD ) goto bad_width;
+        vits_spin_lock(vits);
+        val = ((its_get_pta_type() << VITS_GITS_TYPER_PTA_SHIFT) |
+               VITS_GITS_TYPER_HCC   | VITS_GITS_DEV_BITS |
+               VITS_GITS_ID_BITS     | VITS_GITS_ITT_SIZE |
+               VITS_GITS_DISTRIBUTED | VITS_GITS_PLPIS);
+        *r = (u32)val;
+        vits_spin_unlock(vits);
+        return 1;
+    case 0x0010 ... 0x007c:
+    case 0xc000 ... 0xffcc:
+        /* Implementation defined -- read ignored */
+        dprintk(XENLOG_ERR,
+                "vGITS: read unknown 0x000c - 0x007c r%d offset %#08x\n",
+                dabt.reg, gits_reg);
+        goto read_as_zero;
+    case GITS_CBASER:
+        vits_spin_lock(vits);
+        if ( dabt.size == DABT_DOUBLE_WORD )
+            *r = vits->cmd_base && 0xc7ffffffffffffffUL;
+        else if ( dabt.size == DABT_WORD )
+            *r = (u32)vits->cmd_base;
+        else
+        {
+            vits_spin_unlock(vits);
+            goto bad_width;
+        }
+        vits_spin_unlock(vits);
+        return 1;
+    case GITS_CBASER + 4:
+         /* CBASER support word read */
+        if (dabt.size != DABT_WORD ) goto bad_width;
+        vits_spin_lock(vits);
+        *r = (u32)(vits->cmd_base >> 32);
+        vits_spin_unlock(vits);
+        return 1;
+    case GITS_CWRITER:
+        vits_spin_lock(vits);
+        if ( dabt.size == DABT_DOUBLE_WORD )
+            *r = vits->cmd_write;
+        else if ( dabt.size == DABT_WORD )
+            *r = (u32)vits->cmd_write;
+        else
+        {
+            vits_spin_unlock(vits);
+            goto bad_width;
+        }
+        vits_spin_unlock(vits);
+        return 1;
+    case GITS_CWRITER + 4:
+         /* CWRITER support word read */
+        if ( dabt.size != DABT_WORD ) goto bad_width;
+        vits_spin_lock(vits);
+        *r = (u32)(vits->cmd_write >> 32);
+        vits_spin_unlock(vits);
+        return 1;
+    case GITS_CREADR:
+        vits_spin_lock(vits);
+        if ( dabt.size == DABT_DOUBLE_WORD )
+            *r = vits->cmd_read;
+        else if ( dabt.size == DABT_WORD )
+            *r = (u32)vits->cmd_read;
+        else
+        {
+            vits_spin_unlock(vits);
+            goto bad_width;
+        }
+        vits_spin_unlock(vits);
+        return 1;
+    case GITS_CREADR + 4:
+         /* CREADR support word read */
+        if ( dabt.size != DABT_WORD ) goto bad_width;
+        vits_spin_lock(vits);
+        *r = (u32)(vits->cmd_read >> 32);
+        vits_spin_unlock(vits);
+        return 1;
+    case 0x0098 ... 0x009c:
+    case 0x00a0 ... 0x00fc:
+    case 0x0140 ... 0xbffc:
+        /* Reserved -- read ignored */
+        dprintk(XENLOG_ERR,
+                "vGITS: read unknown 0x0098-9c or 0x00a0-fc r%d offset %#08x\n",
+                dabt.reg, gits_reg);
+        goto read_as_zero;
+    case GITS_BASER ... GITS_BASERN:
+        vits_spin_lock(vits);
+        index = (gits_reg - GITS_BASER) / 8;
+        if ( dabt.size == DABT_DOUBLE_WORD )
+            *r = vits->baser[index];
+        else if ( dabt.size == DABT_WORD )
+        {
+            if ( (gits_reg % 8) == 0 )
+                *r = (u32)vits->baser[index];
+            else
+                *r = (u32)(vits->baser[index] >> 32);
+        }
+        else
+        {
+            vits_spin_unlock(vits);
+            goto bad_width;
+        }
+        vits_spin_unlock(vits);
+        return 1;
+    case GITS_PIDR0:
+        if ( dabt.size != DABT_WORD ) goto bad_width;
+        *r = GITS_PIDR0_VAL;
+        return 1;
+    case GITS_PIDR1:
+        if ( dabt.size != DABT_WORD ) goto bad_width;
+        *r = GITS_PIDR1_VAL;
+        return 1;
+    case GITS_PIDR2:
+        if ( dabt.size != DABT_WORD ) goto bad_width;
+        *r = GITS_PIDR2_VAL;
+        return 1;
+    case GITS_PIDR3:
+        if ( dabt.size != DABT_WORD ) goto bad_width;
+        *r = GITS_PIDR3_VAL;
+        return 1;
+    case GITS_PIDR4:
+        if ( dabt.size != DABT_WORD ) goto bad_width;
+        *r = GITS_PIDR4_VAL;
+        return 1;
+    case GITS_PIDR5 ... GITS_PIDR7:
+        goto read_as_zero;
+   default:
+        dprintk(XENLOG_ERR, "vGITS: unhandled read r%d offset %#08x\n",
+               dabt.reg, gits_reg);
+        return 0;
+    }
+
+bad_width:
+    dprintk(XENLOG_ERR, "vGITS: bad read width %d r%d offset %#08x\n",
+           dabt.size, dabt.reg, gits_reg);
+    domain_crash_synchronous();
+    return 0;
+
+read_as_zero:
+    if ( dabt.size != DABT_WORD ) goto bad_width;
+    *r = 0;
+    return 1;
+}
+
+static int vgic_v3_gits_mmio_write(struct vcpu *v, mmio_info_t *info)
+{
+    struct vgic_its *vits;
+    struct hsr_dabt dabt = info->dabt;
+    struct cpu_user_regs *regs = guest_cpu_user_regs();
+    register_t *r = select_user_reg(regs, dabt.reg);
+    int ret;
+    uint32_t index, gits_reg;
+    uint64_t val;
+
+    vits = its_to_vits(v, info->gpa);
+    if ( vits == NULL ) BUG_ON(1);
+
+    gits_reg = info->gpa - vits->phys_base;
+
+    if ( gits_reg >= SZ_64K )
+    {
+        gdprintk(XENLOG_G_WARNING, "vGIC-ITS: unknown gpa write address"
+                 " %"PRIpaddr"\n", info->gpa);
+        return 0;
+    }
+
+    switch ( gits_reg )
+    {
+    case GITS_CTLR:
+        if ( dabt.size != DABT_WORD ) goto bad_width;
+        vits_spin_lock(vits);
+        vits->ctrl = *r;
+        vits_spin_unlock(vits);
+        return 1;
+    case GITS_IIDR:
+        /* R0 -- write ignored */
+        goto write_ignore;
+    case GITS_TYPER:
+    case GITS_TYPER + 4:
+        /* R0 -- write ignored */
+        goto write_ignore;
+    case 0x0010 ... 0x007c:
+    case 0xc000 ... 0xffcc:
+        /* Implementation defined -- write ignored */
+        dprintk(XENLOG_ERR,
+                "vGITS: write to unknown 0x000c - 0x007c r%d offset %#08x\n",
+                dabt.reg, gits_reg);
+        goto write_ignore;
+    case GITS_CBASER:
+        if ( dabt.size == DABT_BYTE ) goto bad_width;
+        vits_spin_lock(vits);
+        if ( dabt.size == DABT_DOUBLE_WORD )
+            vits->cmd_base = *r;
+        else
+        {
+            val = vits->cmd_base & 0xffffffff00000000UL;
+            val = (*r) | val;
+            vits->cmd_base =  val;
+        }
+        vits->cmd_qsize  =  SZ_4K * ((*r & 0xff) + 1);
+        vits_spin_unlock(vits);
+        return 1;
+    case GITS_CBASER + 4:
+         /* CBASER support word read */
+        if (dabt.size != DABT_WORD ) goto bad_width;
+        vits_spin_lock(vits);
+        val = vits->cmd_base & 0xffffffffUL;
+        val = ((*r & 0xffffffffUL) << 32 ) | val;
+        vits->cmd_base =  val;
+        /* No Need to update cmd_qsize with higher word write */
+        vits_spin_unlock(vits);
+        return 1;
+    case GITS_CWRITER:
+        if ( dabt.size == DABT_BYTE ) goto bad_width;
+        vits_spin_lock(vits);
+        if ( dabt.size == DABT_DOUBLE_WORD )
+            vits->cmd_write = *r;
+        else
+        {
+            val = vits->cmd_write & 0xffffffff00000000UL;
+            val = (*r) | val;
+            vits->cmd_write =  val;
+        }
+        ret = vgic_its_process_cmd(v, vits);
+        vits_spin_unlock(vits);
+        return ret;
+    case GITS_CWRITER + 4:
+        if (dabt.size != DABT_WORD ) goto bad_width;
+        vits_spin_lock(vits);
+        val = vits->cmd_write & 0xffffffffUL;
+        val = ((*r & 0xffffffffUL) << 32) | val;
+        vits->cmd_write =  val;
+        ret = vgic_its_process_cmd(v, vits);
+        vits_spin_unlock(vits);
+        return ret;
+    case GITS_CREADR:
+        /* R0 -- write ignored */
+        goto write_ignore;
+    case 0x0098 ... 0x009c:
+    case 0x00a0 ... 0x00fc:
+    case 0x0140 ... 0xbffc:
+        /* Reserved -- write ignored */
+        dprintk(XENLOG_ERR,
+                "vGITS: write to unknown 0x98-9c or 0xa0-fc r%d offset %#08x\n",
+                dabt.reg, gits_reg);
+        goto write_ignore;
+    case GITS_BASER ... GITS_BASERN:
+        /* Nothing to do with this values. Just store and emulate */
+        vits_spin_lock(vits);
+        index = (gits_reg - GITS_BASER) / 8;
+        if ( dabt.size == DABT_DOUBLE_WORD )
+            vits->baser[index] = *r;
+        else if ( dabt.size == DABT_WORD )
+        {
+            if ( (gits_reg % 8) == 0 )
+            {
+                val = vits->cmd_write & 0xffffffff00000000UL;
+                val = (*r) | val;
+                vits->baser[index] = val;
+            }
+            else
+            {
+                val = vits->baser[index] & 0xffffffffUL;
+                val = ((*r & 0xffffffffUL) << 32) | val;
+                vits->baser[index] = val;
+            }
+        }
+        else
+        {
+            goto bad_width;
+            vits_spin_unlock(vits);
+        }
+        vits_spin_unlock(vits);
+        return 1;
+    case GITS_PIDR7 ... GITS_PIDR0:
+        /* R0 -- write ignored */
+        goto write_ignore;
+   default:
+        dprintk(XENLOG_ERR, "vGITS: unhandled write r%d offset %#08x\n",
+                dabt.reg, gits_reg);
+        return 0;
+    }
+
+bad_width:
+    dprintk(XENLOG_ERR, "vGITS: bad write width %d r%d offset %#08x\n",
+           dabt.size, dabt.reg, gits_reg);
+    domain_crash_synchronous();
+    return 0;
+
+write_ignore:
+    if ( dabt.size != DABT_WORD ) goto bad_width;
+    *r = 0;
+    return 1;
+}
+
+static const struct mmio_handler_ops vgic_gits_mmio_handler = {
+    .read_handler  = vgic_v3_gits_mmio_read,
+    .write_handler = vgic_v3_gits_mmio_write,
+};
+
+int vgic_its_domain_init(struct domain *d)
+{
+    uint32_t num_its;
+    int i;
+
+    num_its =  its_get_nr_its();
+
+    d->arch.vits = xzalloc_array(struct vgic_its, num_its);
+    if ( d->arch.vits == NULL )
+        return -ENOMEM;
+
+    spin_lock_init(&d->arch.vits->lock);
+
+    spin_lock_init(&d->arch.vits_devs.lock);
+    INIT_LIST_HEAD(&d->arch.vits_devs.dev_list);
+
+    d->arch.lpi_conf = xzalloc(struct vgic_lpi_conf);
+    if ( d->arch.lpi_conf == NULL )
+         return -ENOMEM;
+
+    for ( i = 0; i < num_its; i++)
+    {
+         spin_lock_init(&d->arch.vits[i].lock);
+         register_mmio_handler(d, &vgic_gits_mmio_handler,
+                               d->arch.vits[i].phys_base,
+                               SZ_64K);
+    }
+
+    return 0;
+}
+
 /*
  * Local variables:
  * mode: C

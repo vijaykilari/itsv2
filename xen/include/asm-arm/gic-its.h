@@ -227,6 +227,7 @@ int gic_its_send_cmd(struct vcpu *v, struct its_node *its,
 void its_lpi_free(unsigned long *bitmap, int base, int nr_ids);
 unsigned long *its_lpi_alloc_chunks(int nirqs, int *base, int *nr_ids);
 uint32_t its_get_pta_type(void);
+uint32_t its_get_nr_its(void);
 struct its_node * its_get_phys_node(uint32_t dev_id);
 #endif /* __ASM_ARM_GIC_ITS_H__ */
 

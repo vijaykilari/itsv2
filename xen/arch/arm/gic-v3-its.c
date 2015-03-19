@@ -101,6 +101,8 @@ struct its_node {
 };
 
 uint32_t pta_type;
+/* Number of physical its nodes present */
+uint32_t nr_its = 0;
 
 #define ITS_ITT_ALIGN		SZ_256
 
@@ -144,6 +146,11 @@ struct its_cmd_desc {
 uint32_t its_get_pta_type(void)
 {
 	return pta_type;
+}
+
+uint32_t its_get_nr_its(void)
+{
+	return nr_its;
 }
 
 struct its_node * its_get_phys_node(uint32_t dev_id)
@@ -1170,6 +1177,7 @@ static int its_probe(struct dt_device_node *node)
 	}
 	spin_lock(&its_lock);
 	list_add(&its->entry, &its_nodes);
+	nr_its++;
 	spin_unlock(&its_lock);
 
 	return 0;
