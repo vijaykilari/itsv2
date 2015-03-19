@@ -1204,6 +1204,7 @@ static int vgic_v3_domain_init(struct domain *d)
             d->arch.vgic.rdist_regions[i].size);
 
     d->arch.vgic.ctlr = VGICD_CTLR_DEFAULT;
+    vgic_its_domain_init(d);
 
     return 0;
 }

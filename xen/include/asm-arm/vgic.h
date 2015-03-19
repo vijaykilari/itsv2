@@ -177,6 +177,7 @@ enum gic_sgi_mode;
 
 #define vgic_num_irqs(d)        ((d)->arch.vgic.nr_spis + 32)
 
+extern void vgic_its_init(void);
 extern int domain_vgic_init(struct domain *d);
 extern void domain_vgic_free(struct domain *d);
 extern int vcpu_vgic_init(struct vcpu *v);

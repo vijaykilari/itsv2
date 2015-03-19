@@ -773,6 +773,7 @@ void __init start_xen(unsigned long boot_phys_offset,
     init_xen_time();
 
     gic_init();
+    vgic_its_init();
 
     p2m_vmid_allocator_init();
 

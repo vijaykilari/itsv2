@@ -271,6 +271,10 @@ extern void gic_dump_info(struct vcpu *v);
 
 /* Number of interrupt lines */
 extern unsigned int gic_number_lines(void);
+/* Number of interrupt id bits supported */
+extern unsigned int gic_nr_id_bits(void);
+/* LPI support info */
+bool_t gic_lpi_supported(void);
 
 /* IRQ translation function for the device tree */
 int gic_irq_xlate(const u32 *intspec, unsigned int intsize,
@@ -286,6 +290,10 @@ struct gic_info {
     uint8_t nr_lrs;
     /* Maintenance irq number */
     unsigned int maintenance_irq;
+    /* Number of IRQ ID bits supported */
+    uint32_t nr_id_bits;
+    /* LPIs are support information */
+    bool_t lpi_supported; 
 };
 
 struct gic_hw_operations {

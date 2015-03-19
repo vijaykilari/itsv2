@@ -68,6 +68,16 @@ unsigned int gic_number_lines(void)
     return gic_hw_ops->info->nr_lines;
 }
 
+unsigned int gic_nr_id_bits(void)
+{
+    return gic_hw_ops->info->nr_id_bits;
+}
+
+bool_t gic_lpi_supported(void)
+{
+    return gic_hw_ops->info->lpi_supported;
+}
+
 void gic_save_state(struct vcpu *v)
 {
     ASSERT(!local_irq_is_enabled());

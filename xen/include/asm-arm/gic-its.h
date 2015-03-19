@@ -226,6 +226,10 @@ int gic_its_send_cmd(struct vcpu *v, struct its_node *its,
                      struct its_cmd_block *phys_cmd, int send_all);
 int its_make_dt_node(const struct domain *d,
                      const struct dt_device_node *node, void *fdt);
+int its_cpu_init(void);
+int its_init(struct dt_device_node *node, struct rdist_prop *rdist);
+int its_lpi_init(u32 id_bits);
+void its_domain_init(uint32_t its_nr, struct domain *d);
 void its_lpi_free(unsigned long *bitmap, int base, int nr_ids);
 void its_set_affinity(struct irq_desc *d, int cpu);
 void lpi_set_config(struct irq_desc *d, int enable);
@@ -235,6 +239,7 @@ uint32_t its_get_nr_its(void);
 struct its_node * its_get_phys_node(uint32_t dev_id);
 int vgic_its_unmap_lpi_prop(struct vcpu *v);
 int vgic_its_get_pid(struct vcpu *v, uint32_t vlpi, uint32_t *plpi);
+int vgic_its_domain_init(struct domain *d);
 uint8_t vgic_its_get_priority(struct vcpu *v, uint32_t pid);
 #endif /* __ASM_ARM_GIC_ITS_H__ */
 

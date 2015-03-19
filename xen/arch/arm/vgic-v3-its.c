@@ -1455,6 +1455,8 @@ int vgic_its_domain_init(struct domain *d)
     for ( i = 0; i < num_its; i++)
     {
          spin_lock_init(&d->arch.vits[i].lock);
+
+         its_domain_init(i, d);
          register_mmio_handler(d, &vgic_gits_mmio_handler,
                                d->arch.vits[i].phys_base,
                                SZ_64K);
@@ -1463,6 +1465,12 @@ int vgic_its_domain_init(struct domain *d)
     }
 
     return 0;
+}
+
+void vgic_its_init(void)
+{
+    if ( gic_lpi_supported() )
+        its_lpi_init(gic_nr_id_bits());
 }
 
 /*

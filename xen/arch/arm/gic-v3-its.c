@@ -565,7 +565,7 @@ static int its_chunk_to_lpi(int chunk)
 	return (chunk << IRQS_PER_CHUNK_SHIFT) + 8192;
 }
 
-static int its_lpi_init(u32 id_bits)
+int its_lpi_init(u32 id_bits)
 {
 	lpi_chunks = its_lpi_to_chunk(1UL << id_bits);
 
@@ -1079,6 +1079,28 @@ static int its_force_quiescent(void __iomem *base)
 	}
 }
 
+void its_domain_init(uint32_t its_nr, struct domain *d)
+{
+	struct its_node *its;
+	u32 nr = 0;
+
+	ASSERT(its_nr < its_get_nr_its() );
+
+	if (is_hardware_domain(d)) {
+		list_for_each_entry(its, &its_nodes, entry) {
+			if ( nr == its_nr)
+				break;
+			nr++;
+		}
+
+		ASSERT(its != NULL);
+		d->arch.vits[its_nr].phys_base = its->phys_base;
+		d->arch.vits[its_nr].phys_size = its->phys_size;
+		d->arch.vits[its_nr].its  = its;
+	}
+	/* TODO: Update for DomU */
+}
+
 static int its_probe(struct dt_device_node *node)
 {
 	paddr_t its_addr, its_size;
@@ -1231,7 +1253,6 @@ int its_init(struct dt_device_node *node, struct rdist_prop *rdists)
 	gic_root_node = node;
 
 	its_alloc_lpi_tables();
-	its_lpi_init(rdists->id_bits);
 
 	return 0;
 }
