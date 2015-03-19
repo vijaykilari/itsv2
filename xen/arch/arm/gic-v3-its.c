@@ -153,6 +153,18 @@ uint32_t its_get_nr_its(void)
 	return nr_its;
 }
 
+static struct its_node * find_its_node(const struct dt_device_node *node)
+{
+	struct its_node *its;
+
+	list_for_each_entry(its, &its_nodes, entry) {
+		if ( its->dt_node == node )
+			return its;
+	}
+
+	return NULL;    
+}
+
 struct its_node * its_get_phys_node(uint32_t dev_id)
 {
 	struct its_node *its;
@@ -986,6 +998,57 @@ int gic_its_send_cmd(struct vcpu *v, struct its_node *its,
 		return its_send_cmd(v, its, phys_cmd);
 
 	return ret;
+}
+
+int its_make_dt_node(const struct domain *d,
+		     const struct dt_device_node *node, void *fdt)
+{
+	struct its_node *its;
+	const struct dt_device_node *gic;
+	const void *compatible = NULL;
+	uint32_t len;
+	__be32 *new_cells, *tmp;
+	int res = 0;
+
+	its = find_its_node(node);
+	if (its == NULL) {
+		dprintk(XENLOG_ERR, "ITS node not found\n");
+		return -FDT_ERR_XEN(ENOENT);
+	}
+
+	gic = its->dt_node;
+
+	compatible = dt_get_property(gic, "compatible", &len);
+	if (!compatible) {
+		dprintk(XENLOG_ERR, "Can't find compatible property for the its node\n");
+		return -FDT_ERR_XEN(ENOENT);
+	}
+
+	res = fdt_begin_node(fdt, "gic-its");
+	if (res)
+		return res;
+
+	res = fdt_property(fdt, "compatible", compatible, len);
+	if (res)
+		return res;
+
+	res = fdt_property(fdt, "msi-controller", NULL, 0);
+	if (res)
+		return res;
+
+	len = dt_cells_to_size(dt_n_addr_cells(node) + dt_n_size_cells(node));
+
+	new_cells = xzalloc_bytes(len);
+	if (new_cells == NULL)
+		return -FDT_ERR_XEN(ENOMEM);
+	tmp = new_cells;
+
+	dt_set_range(&tmp, node, its->phys_base, its->phys_size);
+
+	res = fdt_property(fdt, "reg", new_cells, len);
+	xfree(new_cells);
+
+	return res;
 }
 
 static int its_force_quiescent(void __iomem *base)

@@ -20,6 +20,7 @@
 #include <asm/cpufeature.h>
 
 #include <asm/gic.h>
+#include <asm/gic-its.h>
 #include <xen/irq.h>
 #include "kernel.h"
 
@@ -779,6 +780,34 @@ static int make_cpus_node(const struct domain *d, void *fdt,
     return res;
 }
 
+static int make_its_node(const struct domain *d, void *fdt,
+                         const struct dt_device_node *node)
+{
+    int res = 0;
+
+    DPRINT("Create GIC ITS node\n");
+
+    res = its_make_dt_node(d, node, fdt);
+    if ( res )
+        return res;
+
+    /*
+     * The value of the property "phandle" in the property "interrupts"
+     * to know on which interrupt controller the interrupt is wired.
+     */
+    if ( node->phandle )
+    {
+        DPRINT("  Set phandle = 0x%x\n", node->phandle);
+        res = fdt_property_cell(fdt, "phandle", node->phandle);
+        if ( res )
+            return res;
+    }
+
+    res = fdt_end_node(fdt);
+
+    return res;
+}
+
 static int make_gic_node(const struct domain *d, void *fdt,
                          const struct dt_device_node *node)
 {
@@ -1041,12 +1070,18 @@ static int handle_node(struct domain *d, struct kernel_info *kinfo,
         DT_MATCH_GIC_V3,
         { /* sentinel */ },
     };
+    static const struct dt_device_match gits_matches[] __initconst =
+    {
+        DT_MATCH_GIC_ITS,
+        { /* sentinel */ },
+    };
     static const struct dt_device_match timer_matches[] __initconst =
     {
         DT_MATCH_TIMER,
         { /* sentinel */ },
     };
     struct dt_device_node *child;
+    struct dt_device_node *gic_child;
     int res;
     const char *name;
     const char *path;
@@ -1070,7 +1105,20 @@ static int handle_node(struct domain *d, struct kernel_info *kinfo,
     /* Replace these nodes with our own. Note that the original may be
      * used_by DOMID_XEN so this check comes first. */
     if ( dt_match_node(gic_matches, node) )
-        return make_gic_node(d, kinfo->fdt, node);
+    {
+        if ( !make_gic_node(d, kinfo->fdt, node) )
+        {
+            dt_for_each_child_node(node, gic_child)
+            {
+                if ( gic_child != NULL )
+                {
+                    if ( dt_match_node(gits_matches, gic_child) )
+                        return make_its_node(d, kinfo->fdt, gic_child);
+                }
+            }
+        }
+        return 0;
+    }
     if ( dt_match_node(timer_matches, node) )
         return make_timer_node(d, kinfo->fdt, node);
 
