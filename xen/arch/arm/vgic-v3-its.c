@@ -1394,6 +1394,34 @@ static const struct mmio_handler_ops vgic_gits_mmio_handler = {
     .write_handler = vgic_v3_gits_mmio_write,
 };
 
+/*
+ * Map the 64K ITS translation space in guest.
+ * This is required purely for device smmu writes.
+*/
+
+static int vgic_map_translation_space(uint32_t nr_its, struct domain *d)
+{
+    uint64_t addr, size;
+    int ret;
+
+    addr = d->arch.vits[nr_its].phys_base + SZ_64K;
+    size = SZ_64K;
+    ret = map_mmio_regions(d,
+                            paddr_to_pfn(addr & PAGE_MASK),
+                            DIV_ROUND_UP(size, PAGE_SIZE),
+                            paddr_to_pfn(addr & PAGE_MASK));
+
+     if ( ret )
+     {
+          printk(XENLOG_ERR "Unable to map to dom%d access to"
+                   " 0x%"PRIx64" - 0x%"PRIx64"\n",
+                   d->domain_id,
+                   addr & PAGE_MASK, PAGE_ALIGN(addr + size) - 1);
+     }
+
+    return ret;
+}
+
 int vgic_its_domain_init(struct domain *d)
 {
     uint32_t num_its;
@@ -1420,6 +1448,8 @@ int vgic_its_domain_init(struct domain *d)
          register_mmio_handler(d, &vgic_gits_mmio_handler,
                                d->arch.vits[i].phys_base,
                                SZ_64K);
+
+        return vgic_map_translation_space(i, d);
     }
 
     return 0;
